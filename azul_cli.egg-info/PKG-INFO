@@ -39,7 +39,6 @@ A Claude-like coding assistant powered by local LLMs via Ollama. AZUL provides a
 - **Interactive REPL**: Natural language conversation with your AI assistant
 - **File Editing**: Safe, permission-based file editing with unified diff support
 - **Code Awareness**: Intelligent context injection using Tree-sitter for efficient code parsing
-- **Git Integration**: Automatic branch creation and file staging for edits
 - **Session Management**: Directory-based conversation history
 - **Real-time Streaming**: Token-by-token response streaming for immediate feedback
 - **Sandboxed Environment**: Secure file operations restricted to your project directory
@@ -178,7 +177,7 @@ azul> @clear
    Apply these changes? (y/n): y
    ```
 
-4. AZUL creates a git branch (if git is available), applies changes, and stages files.
+4. AZUL applies the changes.
 
 ## Configuration
 
@@ -190,9 +189,6 @@ AZUL stores configuration in `~/.azul/config.json`. The default configuration in
   "temperature": 0.7,
   "max_history_messages": 20,
   "max_file_size_mb": 10,
-  "auto_git_branch": true,
-  "auto_git_stage": true,
-  "git_branch_prefix": "azul-edit",
   "permission_defaults": {
     "auto_approve": false,
     "remember_choices": true
@@ -238,7 +234,6 @@ You can change the default model in two ways:
 - **Sandboxed File Operations**: All file paths validated to prevent directory traversal
 - **Permission-Based**: Read-only by default, explicit permission required for edits
 - **Backup Creation**: Automatic backups before file modifications
-- **Git Integration**: Automatic branching for safe experimentation
 
 ## Performance Tips
 

@@ -1,6 +1,6 @@
 """Interactive REPL for AZUL CLI."""
 
-from typing import Optional
+from typing import Optional, Tuple
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.history import FileHistory
@@ -30,6 +30,8 @@ class REPL:
         # Now initialize other components
         self.command_parser = get_command_parser()
         self.command_handler = get_command_handler()
+        # Set REPL instance in command handler for @cd
+        self.command_handler.set_repl(self)
         self.ollama = get_ollama_client()
         self.session = get_session_manager(self.project_root)
         self.context = get_context_manager()
@@ -37,7 +39,7 @@ class REPL:
         self.editor = get_editor()
         
         # Setup prompt session with autocomplete
-        commands = ['@model', '@edit', '@create', '@delete', '@read', '@ls', '@path', '@clear', '@reset', '@help', '@exit', '@quit']
+        commands = ['@model', '@edit', '@create', '@delete', '@read', '@ls', '@path', '@cd', '@clear', '@reset', '@help', '@exit', '@quit']
         command_completer = WordCompleter(
             commands,
             ignore_case=True,
@@ -176,18 +178,87 @@ class REPL:
                 if not success and error:
                     self.formatter.print_warning(f"Could not apply edit: {error}")
     
+    def change_directory(self, target_dir: str) -> Tuple[bool, Optional[str]]:
+        """
+        Change directory and update all components.
+        
+        Args:
+            target_dir: Directory to change to
+            
+        Returns:
+            Tuple of (success, error_message)
+        """
+        import os
+        from pathlib import Path
+        
+        try:
+            # Resolve the target path
+            if Path(target_dir).is_absolute():
+                new_dir = Path(target_dir)
+            else:
+                new_dir = self.project_root / target_dir
+            
+            new_dir = new_dir.resolve()
+            
+            if not new_dir.exists():
+                return False, f"Directory does not exist: {target_dir}"
+            
+            if not new_dir.is_dir():
+                return False, f"Path is not a directory: {target_dir}"
+            
+            # Change actual working directory
+            os.chdir(new_dir)
+            
+            # Update project root
+            self.project_root = new_dir
+            
+            # Update all components
+            from azul.sandbox import get_sandbox
+            from azul.file_monitor import get_file_monitor
+            
+            # Update sandbox
+            get_sandbox(new_dir)
+            
+            # Update session manager
+            self.session = get_session_manager(new_dir)
+            
+            # Update file monitor
+            self.file_monitor.stop()
+            self.file_monitor = get_file_monitor(new_dir)
+            self.file_monitor.start(self._on_file_change)
+            
+            # Update file handler's sandbox reference (it uses global sandbox which is updated)
+            # Force file handler to get the updated sandbox
+            self.command_handler.file_handler.sandbox = get_sandbox(new_dir)
+            
+            # Update context manager (it may cache file references)
+            # The context manager will automatically use the updated file handler
+            
+            self.formatter.print_success(f"Changed directory to: {new_dir}")
+            # Show updated status
+            self.formatter.console.print(f"Directory: {self.project_root}\n")
+            return True, None
+        except Exception as e:
+            return False, f"Error changing directory: {e}"
+    
     def _print_banner(self) -> None:
         """Print AZUL banner."""
         banner = """
-    █████╗   ███████╗   ██╗   ██╗   ██╗       ██╗
-   ██╔══██╗   ╚════██╗  ██║   ██║   ██║       ██║
-  ███████║    █████╔╝   ██║   ██║   ██║       ██║
- ██╔══██║    ██╔═══╝    ██║   ██║   ██║       ██║
-██║  ██║     ███████╗   ╚██████╔╝   ███████╗  ███████╗
-╚═╝  ╚═╝     ╚══════╝    ╚═════╝    ╚══════╝  ╚══════╝
+    █████╗   ███████╗   ██╗   ██╗   ██╗       
+   ██╔══██╗   ╚════██╗  ██║   ██║   ██║      
+  ███████║    █████╔╝   ██║   ██║   ██║       
+ ██╔══██║    ██╔═══╝    ██║   ██║   ██║       
+██║  ██║     ███████╗   ╚██████╔╝   ███████╗  
+╚═╝  ╚═╝     ╚══════╝    ╚═════╝    ╚══════╝ 
 """
         self.formatter.console.print(banner, style="bold blue")
         self.formatter.console.print()
+    
+    def _print_status(self) -> None:
+        """Print current status (model and directory)."""
+        self.formatter.console.print("[bold blue]AZUL CLI[/bold blue] - Type @help for commands, or just ask a question! made by SG")
+        self.formatter.console.print(f"Model: {self.ollama.get_model()}")
+        self.formatter.console.print(f"Directory: {self.project_root}\n")
     
     def run(self) -> None:
         """Run the REPL."""
@@ -195,9 +266,7 @@ class REPL:
         self._print_banner()
         
         # Print welcome message
-        self.formatter.console.print("[bold blue]AZUL CLI[/bold blue] - Type @help for commands, or just ask a question!")
-        self.formatter.console.print(f"Model: {self.ollama.get_model()}")
-        self.formatter.console.print(f"Directory: {self.project_root}\n")
+        self._print_status()
         
         while self.running:
             try:

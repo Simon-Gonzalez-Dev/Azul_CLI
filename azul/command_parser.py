@@ -24,6 +24,7 @@ class CommandParser:
         'read': r'@read\s+(\S+)',
         'ls': r'@ls',
         'path': r'@path',
+        'cd': r'@cd\s+(.+)',
         'clear': r'@clear',
         'reset': r'@reset',
         'help': r'@help',

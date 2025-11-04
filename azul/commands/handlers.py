@@ -24,6 +24,11 @@ class CommandHandler:
         self.editor = get_editor()
         self.formatter = get_formatter()
         self.last_referenced_file: Optional[str] = None
+        self._repl_instance = None  # Will be set by REPL
+    
+    def set_repl(self, repl_instance):
+        """Set the REPL instance for directory changes."""
+        self._repl_instance = repl_instance
     
     def handle_command(self, parsed: ParsedCommand) -> Tuple[bool, Optional[str]]:
         """
@@ -51,6 +56,8 @@ class CommandHandler:
             return self.handle_ls()
         elif cmd == 'path':
             return self.handle_path()
+        elif cmd == 'cd':
+            return self.handle_cd(parsed.args)
         elif cmd == 'clear':
             return self.handle_clear()
         elif cmd == 'reset':
@@ -207,6 +214,43 @@ class CommandHandler:
         self.formatter.console.print(f"\n[bold]Current directory:[/bold] [cyan]{current_path}[/cyan]\n")
         return True, None
     
+    def handle_cd(self, args: list) -> Tuple[bool, Optional[str]]:
+        """Handle @cd command - change directory."""
+        if not args:
+            return False, "Usage: @cd <directory>"
+        
+        target_dir = args[0]
+        
+        # If we have REPL instance, use its method to change directory
+        if self._repl_instance:
+            return self._repl_instance.change_directory(target_dir)
+        
+        # Fallback: just change directory without updating components
+        import os
+        from pathlib import Path
+        
+        try:
+            # Resolve the target path
+            if Path(target_dir).is_absolute():
+                new_dir = Path(target_dir)
+            else:
+                new_dir = Path.cwd() / target_dir
+            
+            new_dir = new_dir.resolve()
+            
+            if not new_dir.exists():
+                return False, f"Directory does not exist: {target_dir}"
+            
+            if not new_dir.is_dir():
+                return False, f"Path is not a directory: {target_dir}"
+            
+            # Change directory
+            os.chdir(new_dir)
+            self.formatter.print_success(f"Changed directory to: {new_dir}")
+            return True, None
+        except Exception as e:
+            return False, f"Error changing directory: {e}"
+    
     def handle_clear(self) -> Tuple[bool, Optional[str]]:
         """Handle @clear command - clear terminal screen."""
         import os
@@ -310,6 +354,7 @@ Available @ commands:
   @read <file>           - Read and display a file
   @ls                    - List files in current directory
   @path                  - Show current directory path
+  @cd <dir>              - Change directory
   @clear                 - Clear terminal screen
   @reset                 - Clear conversation history
   @help                  - Show this help message
