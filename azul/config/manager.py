@@ -14,9 +14,6 @@ class ConfigManager:
         "temperature": 0.7,
         "max_history_messages": 20,
         "max_file_size_mb": 10,
-        "auto_git_branch": True,
-        "auto_git_stage": True,
-        "git_branch_prefix": "azul-edit",
         "permission_defaults": {
             "auto_approve": False,
             "remember_choices": True

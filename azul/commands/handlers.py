@@ -1,5 +1,6 @@
 """Command handlers for @ commands."""
 
+from pathlib import Path
 from typing import Optional, Tuple
 
 from azul.command_parser import ParsedCommand
@@ -46,8 +47,14 @@ class CommandHandler:
             return self.handle_delete(parsed.args)
         elif cmd == 'read':
             return self.handle_read(parsed.args)
+        elif cmd == 'ls':
+            return self.handle_ls()
+        elif cmd == 'path':
+            return self.handle_path()
         elif cmd == 'clear':
             return self.handle_clear()
+        elif cmd == 'reset':
+            return self.handle_reset()
         elif cmd == 'help':
             return self.handle_help()
         elif cmd == 'exit' or cmd == 'quit':
@@ -76,9 +83,13 @@ class CommandHandler:
         file_path = args[0]
         instruction = args[1]
         
-        # Validate file exists
-        if not self.file_handler.file_exists(file_path):
-            return False, f"File not found: {file_path}"
+        # Find the actual file (searches recursively)
+        actual_path = self.file_handler.find_file(file_path)
+        if actual_path is None:
+            return False, f"File not found: {file_path} (searched in project directory)"
+        
+        # Use the found path
+        file_path = str(actual_path.relative_to(Path.cwd())) if actual_path.is_relative_to(Path.cwd()) else str(actual_path)
         
         # Read file for context
         file_content, error = self.file_handler.read_file(file_path)
@@ -131,6 +142,15 @@ class CommandHandler:
             return False, "Usage: @read <file>"
         
         file_path = args[0]
+        
+        # Find the actual file (searches recursively)
+        actual_path = self.file_handler.find_file(file_path)
+        if actual_path:
+            # Show the relative path if found
+            rel_path = actual_path.relative_to(Path.cwd()) if actual_path.is_relative_to(Path.cwd()) else actual_path
+            self.formatter.print_info(f"Found: {rel_path}")
+            file_path = str(rel_path)
+        
         self.last_referenced_file = file_path
         
         content, error = self.file_handler.read_file(file_path)
@@ -140,8 +160,61 @@ class CommandHandler:
         self.formatter.print_code_block(content, "text")
         return True, None
     
+    def handle_ls(self) -> Tuple[bool, Optional[str]]:
+        """Handle @ls command - list files in current directory."""
+        from pathlib import Path
+        import os
+        
+        current_dir = Path.cwd()
+        try:
+            files = []
+            dirs = []
+            
+            for item in sorted(current_dir.iterdir()):
+                # Skip hidden files/dirs (starting with .)
+                if item.name.startswith('.'):
+                    continue
+                
+                if item.is_file():
+                    files.append(item.name)
+                elif item.is_dir():
+                    dirs.append(item.name + '/')
+            
+            # Display directories first, then files
+            all_items = dirs + files
+            
+            if all_items:
+                self.formatter.console.print("\n[bold]Files and directories:[/bold]")
+                # Display in columns for better readability
+                for item in all_items:
+                    if item.endswith('/'):
+                        self.formatter.console.print(f"  [cyan]{item}[/cyan]")
+                    else:
+                        self.formatter.console.print(f"  {item}")
+                self.formatter.console.print()
+            else:
+                self.formatter.print_info("Directory is empty (excluding hidden files)")
+            
+            return True, None
+        except Exception as e:
+            return False, f"Error listing files: {e}"
+    
+    def handle_path(self) -> Tuple[bool, Optional[str]]:
+        """Handle @path command - show current directory path."""
+        from pathlib import Path
+        
+        current_path = Path.cwd().resolve()
+        self.formatter.console.print(f"\n[bold]Current directory:[/bold] [cyan]{current_path}[/cyan]\n")
+        return True, None
+    
     def handle_clear(self) -> Tuple[bool, Optional[str]]:
-        """Handle @clear command."""
+        """Handle @clear command - clear terminal screen."""
+        import os
+        os.system('clear' if os.name != 'nt' else 'cls')
+        return True, None
+    
+    def handle_reset(self) -> Tuple[bool, Optional[str]]:
+        """Handle @reset command - clear conversation history."""
         self.session.clear_history()
         self.formatter.print_success("Conversation history cleared")
         return True, None
@@ -208,6 +281,12 @@ class CommandHandler:
         
         file_path = args[0]
         
+        # Find the actual file (searches recursively)
+        actual_path = self.file_handler.find_file(file_path)
+        if actual_path:
+            # Use the found path
+            file_path = str(actual_path.relative_to(Path.cwd())) if actual_path.is_relative_to(Path.cwd()) else str(actual_path)
+        
         # Delete file
         success, error = self.editor.delete_file(file_path)
         
@@ -229,7 +308,10 @@ Available @ commands:
   @create <file> <inst>  - Create a new file with instruction
   @delete <file>         - Delete a file
   @read <file>           - Read and display a file
-  @clear                 - Clear conversation history
+  @ls                    - List files in current directory
+  @path                  - Show current directory path
+  @clear                 - Clear terminal screen
+  @reset                 - Clear conversation history
   @help                  - Show this help message
   @exit / @quit          - Exit AZUL
 

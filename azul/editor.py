@@ -1,7 +1,6 @@
 """Editor module for parsing and applying unified diffs."""
 
 import re
-import subprocess
 from pathlib import Path
 from typing import Optional, List, Tuple
 from difflib import SequenceMatcher
@@ -175,92 +174,6 @@ class DiffEditor:
         
         return True, None
     
-    def create_git_branch(self, branch_name: Optional[str] = None) -> Tuple[bool, Optional[str]]:
-        """
-        Create a git branch for edits.
-        
-        Args:
-            branch_name: Optional branch name
-            
-        Returns:
-            Tuple of (success, branch_name or error_message)
-        """
-        if not self.config.get("auto_git_branch", True):
-            return True, None
-        
-        try:
-            # Check if git is available
-            result = subprocess.run(
-                ['git', 'rev-parse', '--git-dir'],
-                capture_output=True,
-                cwd=self.sandbox.project_root
-            )
-            
-            if result.returncode != 0:
-                return True, None  # Not a git repo, that's okay
-            
-            # Generate branch name if not provided
-            if not branch_name:
-                prefix = self.config.get("git_branch_prefix", "azul-edit")
-                import time
-                branch_name = f"{prefix}-{int(time.time())}"
-            
-            # Create branch
-            result = subprocess.run(
-                ['git', 'checkout', '-b', branch_name],
-                capture_output=True,
-                cwd=self.sandbox.project_root
-            )
-            
-            if result.returncode == 0:
-                return True, branch_name
-            else:
-                return False, result.stderr.decode()
-        except FileNotFoundError:
-            return True, None  # Git not installed
-        except Exception as e:
-            return False, str(e)
-    
-    def stage_files(self, file_paths: List[str]) -> Tuple[bool, Optional[str]]:
-        """
-        Stage files in git.
-        
-        Args:
-            file_paths: List of file paths to stage
-            
-        Returns:
-            Tuple of (success, error_message)
-        """
-        if not self.config.get("auto_git_stage", True):
-            return True, None
-        
-        try:
-            # Check if git is available
-            result = subprocess.run(
-                ['git', 'rev-parse', '--git-dir'],
-                capture_output=True,
-                cwd=self.sandbox.project_root
-            )
-            
-            if result.returncode != 0:
-                return True, None  # Not a git repo, that's okay
-            
-            # Stage files
-            result = subprocess.run(
-                ['git', 'add'] + file_paths,
-                capture_output=True,
-                cwd=self.sandbox.project_root
-            )
-            
-            if result.returncode == 0:
-                return True, None
-            else:
-                return False, result.stderr.decode()
-        except FileNotFoundError:
-            return True, None  # Git not installed
-        except Exception as e:
-            return False, str(e)
-    
     def edit_file(
         self,
         file_path: str,
@@ -268,7 +181,7 @@ class DiffEditor:
         show_preview: bool = True
     ) -> Tuple[bool, Optional[str]]:
         """
-        Edit a file with permission and git integration.
+        Edit a file with permission.
         
         Args:
             file_path: Path to file
@@ -291,38 +204,18 @@ class DiffEditor:
         if not self.permissions.request_edit_permission(file_path, diff):
             return False, "Permission denied"
         
-        # Create backup
-        backup_path, error = self.file_handler.create_backup(file_path)
-        if error:
-            return False, f"Could not create backup: {error}"
-        
-        # Create git branch
-        branch_success, branch_name = self.create_git_branch()
-        if not branch_success:
-            self.formatter.print_warning(f"Could not create git branch: {branch_name}")
+        # Find the actual file path (searches recursively)
+        actual_file_path = self.file_handler.find_file(file_path)
+        if actual_file_path is None:
+            return False, f"File not found: {file_path}"
         
         # Apply diff
-        success, error = self.apply_diff_to_file(file_path, diff)
+        success, error = self.apply_diff_to_file(str(actual_file_path), diff)
         
         if not success:
-            # Restore from backup
-            if backup_path and backup_path.exists():
-                restore_content, _ = self.file_handler.read_file(str(backup_path))
-                if restore_content:
-                    self.file_handler.write_file(file_path, restore_content)
             return False, error
         
-        # Stage files in git
-        stage_success, stage_error = self.stage_files([file_path])
-        if stage_success and branch_name:
-            self.formatter.print_success(
-                f"Changes applied and staged. Branch: {branch_name}"
-            )
-        elif stage_success:
-            self.formatter.print_success("Changes applied")
-        else:
-            self.formatter.print_warning(f"Changes applied but could not stage: {stage_error}")
-        
+        self.formatter.print_success("Changes applied")
         return True, None
     
     def extract_file_content(self, content: str) -> Optional[Tuple[str, str]]:
@@ -372,7 +265,7 @@ class DiffEditor:
         show_preview: bool = True
     ) -> Tuple[bool, Optional[str]]:
         """
-        Create a new file with permission and git integration.
+        Create a new file with permission.
         
         Args:
             file_path: Path to file to create
@@ -391,27 +284,12 @@ class DiffEditor:
         if not self.permissions.request_file_creation_permission(file_path, file_content if show_preview else None):
             return False, "Permission denied"
         
-        # Create git branch
-        branch_success, branch_name = self.create_git_branch()
-        if not branch_success:
-            self.formatter.print_warning(f"Could not create git branch: {branch_name}")
-        
         # Write file
         error = self.file_handler.write_file(file_path, file_content)
         if error:
             return False, error
         
-        # Stage files in git
-        stage_success, stage_error = self.stage_files([file_path])
-        if stage_success and branch_name:
-            self.formatter.print_success(
-                f"File created and staged. Branch: {branch_name}"
-            )
-        elif stage_success:
-            self.formatter.print_success("File created")
-        else:
-            self.formatter.print_warning(f"File created but could not stage: {stage_error}")
-        
+        self.formatter.print_success("File created")
         return True, None
     
     def delete_file(
@@ -420,7 +298,7 @@ class DiffEditor:
         show_preview: bool = True
     ) -> Tuple[bool, Optional[str]]:
         """
-        Delete a file with permission and git integration.
+        Delete a file with permission.
         
         Args:
             file_path: Path to file to delete
@@ -444,46 +322,20 @@ class DiffEditor:
         ):
             return False, "Permission denied"
         
-        # Create backup (optional, but good practice)
-        backup_path, error = self.file_handler.create_backup(file_path)
-        if error:
-            self.formatter.print_warning(f"Could not create backup: {error}")
-        
-        # Create git branch
-        branch_success, branch_name = self.create_git_branch()
-        if not branch_success:
-            self.formatter.print_warning(f"Could not create git branch: {branch_name}")
+        # Find the actual file path (searches recursively)
+        actual_file_path = self.file_handler.find_file(file_path)
+        if actual_file_path is None:
+            return False, f"File not found: {file_path}"
         
         # Delete file
-        safe_path = self.sandbox.get_safe_path(file_path)
-        if safe_path is None:
-            return False, "File path is outside the project directory or invalid"
+        safe_path = actual_file_path
         
         try:
             safe_path.unlink()
         except (OSError, IOError) as e:
             return False, f"Error deleting file: {e}"
         
-        # Stage deletion in git (use git rm)
-        try:
-            result = subprocess.run(
-                ['git', 'rm', file_path],
-                capture_output=True,
-                cwd=self.sandbox.project_root
-            )
-            if result.returncode == 0:
-                if branch_name:
-                    self.formatter.print_success(
-                        f"File deleted and staged. Branch: {branch_name}"
-                    )
-                else:
-                    self.formatter.print_success("File deleted and staged")
-            else:
-                self.formatter.print_warning(f"File deleted but could not stage in git")
-        except (FileNotFoundError, Exception):
-            # Git not available or error - file is still deleted
-            self.formatter.print_success("File deleted")
-        
+        self.formatter.print_success("File deleted")
         return True, None
     
     def _detect_language(self, file_path: str) -> str:

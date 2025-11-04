@@ -1,8 +1,7 @@
-"""Safe file I/O operations with validation and backups."""
+"""Safe file I/O operations with validation."""
 
-import shutil
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 from azul.sandbox import get_sandbox
 
@@ -63,15 +62,19 @@ class FileHandler:
         Safely read a text file.
         
         Args:
-            file_path: Path to file (relative or absolute)
+            file_path: Path to file (relative or absolute, will search if not found)
             
         Returns:
             Tuple of (content, error_message). content is None if error occurred.
         """
-        safe_path = self.sandbox.get_safe_path(file_path)
+        # Try to find the file (searches recursively if needed)
+        safe_path = self.find_file(file_path)
         
         if safe_path is None:
-            return None, "File path is outside the project directory or invalid"
+            # Try direct path first
+            safe_path = self.sandbox.get_safe_path(file_path)
+            if safe_path is None:
+                return None, f"File not found: {file_path} (searched in {self.sandbox.project_root})"
         
         if not safe_path.exists():
             return None, f"File does not exist: {file_path}"
@@ -98,38 +101,51 @@ class FileHandler:
         except (IOError, OSError) as e:
             return None, f"Error reading file: {e}"
     
-    def create_backup(self, file_path: str) -> Tuple[Optional[Path], Optional[str]]:
+    def find_file(self, filename: str) -> Optional[Path]:
         """
-        Create a backup of a file.
+        Search for a file by name in the project directory (recursively).
         
         Args:
-            file_path: Path to file to backup
+            filename: Name of the file to find (can include subdirectories)
             
         Returns:
-            Tuple of (backup_path, error_message). backup_path is None if error occurred.
+            Path to the file if found, None otherwise
         """
-        safe_path = self.sandbox.get_safe_path(file_path)
+        # First try exact path match
+        safe_path = self.sandbox.get_safe_path(filename)
+        if safe_path and safe_path.exists() and safe_path.is_file():
+            return safe_path
         
-        if safe_path is None:
-            return None, "File path is outside the project directory or invalid"
+        # If not found, search recursively
+        project_root = self.sandbox.project_root
+        filename_only = Path(filename).name
         
-        if not safe_path.exists():
-            return None, f"File does not exist: {file_path}"
+        # Search recursively for the file
+        for path in project_root.rglob(filename_only):
+            # Skip hidden directories and files
+            if any(part.startswith('.') for part in path.parts):
+                continue
+            
+            # Validate it's within sandbox
+            if self.sandbox.validate_path(path) and path.is_file():
+                return path
         
-        backup_path = safe_path.with_suffix(safe_path.suffix + '.bak')
+        # Also try searching with the full relative path
+        if '/' in filename or '\\' in filename:
+            # Try as relative path
+            potential_path = project_root / filename
+            safe_path = self.sandbox.get_safe_path(str(potential_path))
+            if safe_path and safe_path.exists() and safe_path.is_file():
+                return safe_path
         
-        try:
-            shutil.copy2(safe_path, backup_path)
-            return backup_path, None
-        except (IOError, OSError) as e:
-            return None, f"Error creating backup: {e}"
+        return None
     
     def write_file(self, file_path: str, content: str) -> Optional[str]:
         """
         Safely write content to a file.
         
         Args:
-            file_path: Path to file
+            file_path: Path to file (can include subdirectories)
             content: Content to write
             
         Returns:
@@ -151,7 +167,11 @@ class FileHandler:
             return f"Error writing file: {e}"
     
     def file_exists(self, file_path: str) -> bool:
-        """Check if a file exists and is accessible."""
+        """Check if a file exists and is accessible (searches recursively)."""
+        found_path = self.find_file(file_path)
+        if found_path:
+            return True
+        # Fallback to direct path check
         safe_path = self.sandbox.get_safe_path(file_path)
         return safe_path is not None and safe_path.exists() and safe_path.is_file()
 

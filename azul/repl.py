@@ -36,9 +36,10 @@ class REPL:
         self.formatter = get_formatter()
         self.editor = get_editor()
         
-        # Setup prompt session
+        # Setup prompt session with autocomplete
+        commands = ['@model', '@edit', '@create', '@delete', '@read', '@ls', '@path', '@clear', '@reset', '@help', '@exit', '@quit']
         command_completer = WordCompleter(
-            ['@model', '@edit', '@create', '@delete', '@read', '@clear', '@help', '@exit', '@quit'],
+            commands,
             ignore_case=True,
             sentence=True  # Match anywhere in the text
         )
@@ -50,7 +51,7 @@ class REPL:
             completer=command_completer,
             history=FileHistory(str(history_file)),
             multiline=False,  # Single line input - Enter submits
-            complete_while_typing=False  # Only complete on Tab, not while typing
+            complete_while_typing=True  # Show completions while typing @ and allow Tab to navigate
         )
         
         # Setup file monitoring
@@ -175,10 +176,28 @@ class REPL:
                 if not success and error:
                     self.formatter.print_warning(f"Could not apply edit: {error}")
     
+    def _print_banner(self) -> None:
+        """Print AZUL banner."""
+        banner = """
+    █████╗   ███████╗   ██╗   ██╗   ██╗       ██╗
+   ██╔══██╗   ╚════██╗  ██║   ██║   ██║       ██║
+  ███████║    █████╔╝   ██║   ██║   ██║       ██║
+ ██╔══██║    ██╔═══╝    ██║   ██║   ██║       ██║
+██║  ██║     ███████╗   ╚██████╔╝   ███████╗  ███████╗
+╚═╝  ╚═╝     ╚══════╝    ╚═════╝    ╚══════╝  ╚══════╝
+"""
+        self.formatter.console.print(banner, style="bold blue")
+        self.formatter.console.print()
+    
     def run(self) -> None:
         """Run the REPL."""
+        # Print banner
+        self._print_banner()
+        
+        # Print welcome message
         self.formatter.console.print("[bold blue]AZUL CLI[/bold blue] - Type @help for commands, or just ask a question!")
-        self.formatter.console.print(f"Model: {self.ollama.get_model()}\n")
+        self.formatter.console.print(f"Model: {self.ollama.get_model()}")
+        self.formatter.console.print(f"Directory: {self.project_root}\n")
         
         while self.running:
             try:
