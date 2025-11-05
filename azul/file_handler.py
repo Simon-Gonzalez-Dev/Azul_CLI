@@ -1,5 +1,6 @@
 """Safe file I/O operations with validation."""
 
+import shutil
 from pathlib import Path
 from typing import Optional, Tuple, List
 
@@ -139,6 +140,54 @@ class FileHandler:
                 return safe_path
         
         return None
+    
+    def find_path(self, pathname: str) -> Optional[Path]:
+        """
+        Search for a file or directory by name in the project directory (recursively).
+        
+        Args:
+            pathname: Name of the file or directory to find (can include subdirectories)
+            
+        Returns:
+            Path to the file or directory if found, None otherwise
+        """
+        # First try exact path match (file or directory)
+        safe_path = self.sandbox.get_safe_path(pathname)
+        if safe_path and safe_path.exists():
+            return safe_path
+        
+        # If not found, search recursively
+        project_root = self.sandbox.project_root
+        pathname_only = Path(pathname).name
+        
+        # Search recursively for files and directories
+        for path in project_root.rglob(pathname_only):
+            # Skip hidden directories and files
+            if any(part.startswith('.') for part in path.parts):
+                continue
+            
+            # Validate it's within sandbox
+            if self.sandbox.validate_path(path):
+                return path
+        
+        # Also try searching with the full relative path
+        if '/' in pathname or '\\' in pathname:
+            # Try as relative path
+            potential_path = project_root / pathname
+            safe_path = self.sandbox.get_safe_path(str(potential_path))
+            if safe_path and safe_path.exists():
+                return safe_path
+        
+        return None
+    
+    def path_exists(self, pathname: str) -> bool:
+        """Check if a file or directory exists and is accessible (searches recursively)."""
+        found_path = self.find_path(pathname)
+        if found_path:
+            return True
+        # Fallback to direct path check
+        safe_path = self.sandbox.get_safe_path(pathname)
+        return safe_path is not None and safe_path.exists()
     
     def write_file(self, file_path: str, content: str) -> Optional[str]:
         """

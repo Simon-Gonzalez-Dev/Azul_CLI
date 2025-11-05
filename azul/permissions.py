@@ -137,6 +137,26 @@ class PermissionManager:
         
         click.echo("="*70 + "\n")
         return results
+    
+    def request_command_permission(self, command: str) -> bool:
+        """
+        Request permission to execute a shell command.
+        
+        Args:
+            command: Command that will be executed
+            
+        Returns:
+            True if permission granted, False otherwise
+        """
+        self.formatter.print_info(f"\n[AGENT WANTS TO RUN]: {command}")
+        
+        # Check if auto-approve is enabled
+        auto_approve = self.config.get("permission_defaults", {}).get("auto_approve", False)
+        if auto_approve:
+            self.formatter.print_info("Auto-approve is enabled. Proceeding...")
+            return True
+        
+        return click.confirm("Allow this command to run?", default=False)
 
 
 # Global permission manager instance

@@ -96,11 +96,11 @@ class ToolExecutor:
     
     def execute_delete(self, file_path: str) -> str:
         """
-        Execute delete() tool - delete file.
+        Execute delete() tool - delete file or directory.
         Note: This is for the agent loop - final actions still require user confirmation.
         
         Args:
-            file_path: Path to file to delete
+            file_path: Path to file or directory to delete
             
         Returns:
             Success or error message
@@ -108,15 +108,30 @@ class ToolExecutor:
         # Validate path
         safe_path = self.sandbox.get_safe_path(file_path)
         if safe_path is None:
-            return f"Error: File path is outside the project directory: {file_path}"
+            return f"Error: Path is outside the project directory: {file_path}"
         
-        # Check if file exists
-        if not self.file_handler.file_exists(file_path):
-            return f"Error: File not found: {file_path}"
+        # Check if path exists (file or directory)
+        if not self.file_handler.path_exists(file_path):
+            return f"Error: File or directory not found: {file_path}"
         
         # For agent loop, prepare deletion but don't delete yet
         # The actual deletion will happen with user confirmation later
         return f"Prepared to delete: {file_path}"
+    
+    def execute_exec(self, command: str, background: bool = False) -> str:
+        """
+        Execute exec() tool - run shell command.
+        Note: This is a placeholder for the agent loop - actual execution happens in REPL with confirmation.
+        
+        Args:
+            command: Shell command to execute
+            background: Whether to run in background (for long-running commands)
+            
+        Returns:
+            Placeholder message
+        """
+        # This is just a placeholder - actual execution happens in REPL with user confirmation
+        return f"Prepared to execute: {command} (background={background})"
     
     def execute_tool(self, tool_name: str, arguments: dict) -> str:
         """
@@ -161,6 +176,13 @@ class ToolExecutor:
                 return "Error: delete() requires file_path argument"
             return self.execute_delete(file_path)
         
+        elif tool_name == "exec":
+            command = arguments.get('command')
+            background = arguments.get('background', False)
+            if not command:
+                return "Error: exec() requires command argument"
+            return self.execute_exec(command, background)
+        
         else:
-            return f"Error: Unknown tool '{tool_name}'. Available tools: tree, read, write, diff, delete"
+            return f"Error: Unknown tool '{tool_name}'. Available tools: tree, read, write, diff, delete, exec"
 

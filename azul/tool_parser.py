@@ -103,6 +103,23 @@ def extract_tool_call(content: str) -> Optional[ToolCall]:
                     if isinstance(keyword.value, (ast.Str, ast.Constant)):
                         value = keyword.value.s if hasattr(keyword.value, 's') else keyword.value.value
                         arguments[keyword.arg] = value
+                    elif isinstance(keyword.value, ast.NameConstant):  # Python < 3.8
+                        # Handle True, False, None
+                        arguments[keyword.arg] = keyword.value.value
+                    elif isinstance(keyword.value, ast.Constant):  # Python 3.8+
+                        # Handle True, False, None, numbers, strings
+                        arguments[keyword.arg] = keyword.value.value
+                    elif isinstance(keyword.value, ast.Name):
+                        # Handle variable names like True, False, None
+                        name = keyword.value.id
+                        if name == 'True':
+                            arguments[keyword.arg] = True
+                        elif name == 'False':
+                            arguments[keyword.arg] = False
+                        elif name == 'None':
+                            arguments[keyword.arg] = None
+                        else:
+                            arguments[keyword.arg] = name
                     else:
                         try:
                             value = ast.literal_eval(keyword.value)
@@ -111,16 +128,24 @@ def extract_tool_call(content: str) -> Optional[ToolCall]:
                             arguments[keyword.arg] = None
             
             # Special handling for common tools
-            # If first positional arg looks like a file path, use 'file_path' key
-            if 'arg_0' in arguments:
-                if isinstance(arguments['arg_0'], str):
-                    if 'file_path' not in arguments:
-                        arguments['file_path'] = arguments.pop('arg_0')
-            
-            # If second positional arg looks like content, use 'content' key
-            if 'arg_1' in arguments:
-                if 'content' not in arguments and 'diff_content' not in arguments:
-                    arguments['content'] = arguments.pop('arg_1')
+            # For exec tool: first arg is command
+            if tool_name == 'exec':
+                if 'arg_0' in arguments:
+                    if isinstance(arguments['arg_0'], str):
+                        if 'command' not in arguments:
+                            arguments['command'] = arguments.pop('arg_0')
+                # background parameter should already be handled by keyword args
+            else:
+                # If first positional arg looks like a file path, use 'file_path' key
+                if 'arg_0' in arguments:
+                    if isinstance(arguments['arg_0'], str):
+                        if 'file_path' not in arguments:
+                            arguments['file_path'] = arguments.pop('arg_0')
+                
+                # If second positional arg looks like content, use 'content' key
+                if 'arg_1' in arguments:
+                    if 'content' not in arguments and 'diff_content' not in arguments:
+                        arguments['content'] = arguments.pop('arg_1')
             
             return ToolCall(
                 tool_name=tool_name,
@@ -143,20 +168,45 @@ def extract_tool_call(content: str) -> Optional[ToolCall]:
                 # Try to parse arguments (simple string extraction)
                 # Handle quoted strings
                 arg_pattern = r"(['\"])((?:(?=(\\?))\3.)*?)\1"
-                args = re.findall(arg_pattern, args_str)
+                string_args = re.findall(arg_pattern, args_str)
                 
-                if args:
-                    # Extract string values
-                    parsed_args = [arg[1] for arg in args]
+                # Handle keyword arguments like background=True
+                keyword_pattern = r'(\w+)\s*=\s*(True|False|None|\w+|\'[^\']*\'|"[^"]*")'
+                keyword_args = re.findall(keyword_pattern, args_str)
+                
+                # Process keyword arguments
+                for key, value in keyword_args:
+                    # Parse boolean values
+                    if value == 'True':
+                        arguments[key] = True
+                    elif value == 'False':
+                        arguments[key] = False
+                    elif value == 'None':
+                        arguments[key] = None
+                    elif value.startswith(("'", '"')):
+                        # String value
+                        arguments[key] = value.strip('\'"')
+                    else:
+                        arguments[key] = value
+                
+                # Process positional arguments (if any strings found)
+                if string_args:
+                    parsed_args = [arg[1] for arg in string_args]
                     if parsed_args:
-                        arguments['file_path'] = parsed_args[0]
+                        if tool_name == 'exec':
+                            arguments['command'] = parsed_args[0]
+                        else:
+                            arguments['file_path'] = parsed_args[0]
                     if len(parsed_args) > 1:
                         arguments['content'] = parsed_args[1]
-                else:
+                elif not keyword_args:
                     # No quotes, try simple split (for non-string args)
                     parts = args_str.split(',')
                     if parts:
-                        arguments['file_path'] = parts[0].strip()
+                        if tool_name == 'exec':
+                            arguments['command'] = parts[0].strip()
+                        else:
+                            arguments['file_path'] = parts[0].strip()
                     if len(parts) > 1:
                         arguments['content'] = parts[1].strip()
             

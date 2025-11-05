@@ -297,44 +297,56 @@ class DiffEditor:
         show_preview: bool = True
     ) -> Tuple[bool, Optional[str]]:
         """
-        Delete a file with permission.
+        Delete a file or directory with permission.
         
         Args:
-            file_path: Path to file to delete
-            show_preview: Whether to show file info
+            file_path: Path to file or directory to delete
+            show_preview: Whether to show file/directory info
             
         Returns:
             Tuple of (success, error_message)
         """
-        # Validate file exists
-        if not self.file_handler.file_exists(file_path):
-            return False, f"File not found: {file_path}"
+        # Find the actual path (file or directory)
+        actual_path = self.file_handler.find_path(file_path)
+        if actual_path is None:
+            return False, f"File or directory not found: {file_path}"
+        
+        # Determine if it's a file or directory
+        is_directory = actual_path.is_dir()
+        item_type = "directory" if is_directory else "file"
         
         # Show preview
         if show_preview:
-            self.formatter.print_warning(f"This will delete: {file_path}")
+            if is_directory:
+                self.formatter.print_warning(f"This will delete the directory and all its contents: {file_path}")
+            else:
+                self.formatter.print_warning(f"This will delete: {file_path}")
         
         # Request permission
+        action_desc = f"delete this {item_type}"
+        description = f"This will permanently delete: {file_path}"
+        if is_directory:
+            description += " (and all its contents)"
+        
         if not self.permissions.request_permission(
-            action="delete this file",
-            description=f"This will permanently delete: {file_path}"
+            action=action_desc,
+            description=description
         ):
             return False, "Permission denied"
         
-        # Find the actual file path (searches recursively)
-        actual_file_path = self.file_handler.find_file(file_path)
-        if actual_file_path is None:
-            return False, f"File not found: {file_path}"
-        
-        # Delete file
-        safe_path = actual_file_path
-        
+        # Delete file or directory
         try:
-            safe_path.unlink()
+            if is_directory:
+                # Recursively delete directory
+                shutil.rmtree(actual_path)
+                self.formatter.print_success("Directory deleted")
+            else:
+                # Delete file
+                actual_path.unlink()
+                self.formatter.print_success("File deleted")
         except (OSError, IOError) as e:
-            return False, f"Error deleting file: {e}"
+            return False, f"Error deleting {item_type}: {e}"
         
-        self.formatter.print_success("File deleted")
         return True, None
     
     def _detect_language(self, file_path: str) -> str:

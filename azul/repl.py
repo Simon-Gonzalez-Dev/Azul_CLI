@@ -21,6 +21,9 @@ from azul.intent_filter import is_likely_false_positive
 from azul.tool_parser import extract_tool_call, detect_tool_call, remove_tool_call_from_content
 from azul.tools import ToolExecutor
 from azul.tree_generator import generate_tree
+from azul.command_executor import CommandExecutor
+from azul.permissions import get_permission_manager
+import threading
 
 
 class REPL:
@@ -44,6 +47,8 @@ class REPL:
         self.editor = get_editor()
         self.config = get_config_manager()
         self.tool_executor = ToolExecutor(self.project_root)
+        self.command_executor = CommandExecutor(self.project_root)
+        self.permissions = get_permission_manager()
         
         # Commands for autocomplete
         commands = ['@model', '@edit', '@create', '@delete', '@read', '@ls', '@path', '@cd', '@clear', '@reset', '@help', '@exit', '@quit']
@@ -218,9 +223,78 @@ class REPL:
                 if conversational_text.strip():
                     self.session.add_message("assistant", conversational_text)
                 
-                # Show status message
+                # Show status message and handle special tools
                 tool_name = tool_call.tool_name
-                if tool_name == "read":
+                
+                # Handle exec tool calls specially (with confirmation and execution)
+                if tool_name == "exec":
+                    command = tool_call.arguments.get('command')
+                    background = tool_call.arguments.get('background', False)
+                    
+                    if not command:
+                        tool_output = "Error: exec() requires command argument"
+                        formatted_output = f"Tool Output:\n{tool_output}"
+                        self.session.add_message("tool", formatted_output)
+                        continue
+                    
+                    # Request user confirmation
+                    if not self.permissions.request_command_permission(command):
+                        tool_output = f"Command execution cancelled by user: {command}"
+                        formatted_output = f"Tool Output:\n{tool_output}"
+                        self.session.add_message("tool", formatted_output)
+                        # Continue loop - AI will see that command was cancelled
+                        continue
+                    
+                    # Execute command
+                    if background:
+                        # Background execution with real-time streaming
+                        completion_event = threading.Event()
+                        exit_code = [-1]  # Use list to allow modification in callback
+                        
+                        def on_complete(code):
+                            exit_code[0] = code
+                            completion_event.set()
+                        
+                        # Start async command
+                        self.command_executor.run_command_async(command, on_complete)
+                        
+                        # Wait for completion (output streams in real-time)
+                        completion_event.wait()
+                        
+                        # Format tool output for AI
+                        if exit_code[0] == 0:
+                            tool_output = f"Command '{command}' finished with exit code 0."
+                        else:
+                            tool_output = f"Command '{command}' finished with exit code {exit_code[0]}."
+                    else:
+                        # Synchronous execution
+                        exit_code, output = self.command_executor.run_command_sync(command)
+                        
+                        # Display output if any
+                        if output:
+                            self.formatter.console.print(
+                                f"[bold magenta][exec]:[/bold magenta] {output}"
+                            )
+                        
+                        # Format tool output for AI
+                        if exit_code == 0:
+                            tool_output = f"Command '{command}' finished with exit code 0."
+                            if output:
+                                tool_output += f"\nOutput:\n{output}"
+                        else:
+                            tool_output = f"Command '{command}' finished with exit code {exit_code}."
+                            if output:
+                                tool_output += f"\nError output:\n{output}"
+                    
+                    # Add tool output to conversation history
+                    formatted_output = f"Tool Output:\n{tool_output}"
+                    self.session.add_message("tool", formatted_output)
+                    
+                    # Continue loop - AI will see command result and continue
+                    continue
+                
+                # Handle other tools
+                elif tool_name == "read":
                     file_path = tool_call.arguments.get('file_path', 'file')
                     self.formatter.print_info(f"[AZUL is reading {file_path}...]")
                 elif tool_name == "tree":
