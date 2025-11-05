@@ -412,12 +412,44 @@ Everything else is treated as a natural language prompt to the AI.
         try:
             metrics = rag_manager.index(clean=clean)
             
-            # Display metrics
-            self.formatter.console.print("\n[bold green]Indexing complete![/bold green]")
-            self.formatter.console.print(f"  Files indexed: {metrics.get('files_indexed', 0)}")
-            self.formatter.console.print(f"  Chunks created: {metrics.get('chunks_created', 0)}")
-            self.formatter.console.print(f"  Index size: {metrics.get('index_size_mb', 0):.2f} MB")
-            self.formatter.console.print(f"  Time: {metrics.get('indexing_time', 0):.2f}s")
+            # Display comprehensive indexing metrics
+            self.formatter.console.print("\n[bold green]✅ Indexing complete![/bold green]\n")
+            
+            # Overall indexing time
+            indexing_time = metrics.get('indexing_time', 0)
+            self.formatter.console.print(f"[bold]Overall Indexing Time:[/bold] {indexing_time:.2f}s\n")
+            
+            # Files indexed
+            files_count = metrics.get('files_indexed', 0)
+            files_list = metrics.get('files_list', [])
+            self.formatter.console.print(f"[bold]Files Indexed:[/bold] {files_count}")
+            if files_list:
+                self.formatter.console.print("  Sample files:")
+                for file_path in files_list[:10]:
+                    self.formatter.console.print(f"    - {file_path}")
+                if files_count > 10:
+                    self.formatter.console.print(f"    ... and {files_count - 10} more files")
+            self.formatter.console.print()
+            
+            # Chunks created
+            chunks_created = metrics.get('chunks_created', 0)
+            self.formatter.console.print(f"[bold]Chunks Created:[/bold] {chunks_created}\n")
+            
+            # Vector DB size
+            index_size_mb = metrics.get('index_size_mb', 0)
+            self.formatter.console.print(f"[bold]Vector DB Size:[/bold] {index_size_mb:.2f} MB\n")
+            
+            # Peak memory usage
+            peak_ram_mb = metrics.get('peak_ram_mb', 0)
+            self.formatter.console.print(f"[bold]Peak RAM Usage:[/bold] {peak_ram_mb:.2f} MB")
+            
+            # VRAM usage (if available)
+            peak_vram_mb = metrics.get('peak_vram_mb')
+            if peak_vram_mb is not None:
+                self.formatter.console.print(f"[bold]Peak VRAM Usage:[/bold] {peak_vram_mb:.2f} MB")
+            else:
+                self.formatter.console.print("[bold]Peak VRAM Usage:[/bold] N/A (not available)")
+            
             self.formatter.console.print()
             
             return True, None

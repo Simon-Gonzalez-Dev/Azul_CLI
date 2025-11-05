@@ -166,9 +166,14 @@ class REPL:
         status = self.formatter.show_status("AZUL is thinking...")
         status.__enter__()
         
-        ttft_start = time.time()
         output_tokens = 0
         generation_start = None
+        
+        # Start TTFT timing (when prompt is sent to LLM)
+        if self.rag_manager:
+            self.rag_manager.start_ttft()
+        
+        ttft_start = time.time()
         
         try:
             stream = self.ollama.stream_chat(

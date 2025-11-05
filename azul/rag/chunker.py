@@ -33,24 +33,78 @@ class Chunker:
     
     def _load_parsers(self) -> None:
         """Load Tree-sitter parsers for supported languages."""
-        # Python is already available via tree-sitter-python
-        try:
-            from tree_sitter_python import language as python_language
-            self._parsers["python"] = python_language
-        except ImportError:
-            pass
+        # Python is available via tree-sitter-python
+        # The language() function returns a PyCapsule that needs to be wrapped in Language()
+        self._parsers = {}
+        self._parser_errors = {}
         
-        # Add more languages as needed
-        # For now, we'll use Python parser and fallback for others
+        # Try to load Python parser
+        try:
+            from tree_sitter_python import language as python_language_func
+            
+            # Get the language capsule and wrap it in Language()
+            try:
+                lang_capsule = python_language_func()
+                python_language = Language(lang_capsule)
+                
+                # Verify it works by creating a test parser
+                test_parser = Parser()
+                test_parser.language = python_language
+                
+                # If successful, store the Language object
+                self._parsers["python"] = python_language
+                logger.info("Successfully loaded Python Tree-sitter parser")
+            except TypeError as e:
+                # Language constructor failed
+                logger.error(f"Failed to create Language object: {e}")
+                logger.error("This usually means tree-sitter or tree-sitter-python version is incompatible.")
+                self._parser_errors["python"] = f"Language object creation failed: {e}"
+            except AttributeError as e:
+                # Parser.language assignment failed
+                logger.error(f"Failed to set parser language: {e}")
+                logger.error("This usually means tree-sitter version is incompatible.")
+                logger.error("Please ensure tree-sitter>=0.20.0,<0.22.0 is installed.")
+                self._parser_errors["python"] = f"Parser language assignment failed: {e}"
+            except Exception as e:
+                # Other error when trying to set language
+                logger.error(f"Failed to initialize parser: {e}")
+                self._parser_errors["python"] = f"Parser initialization error: {e}"
+        except ImportError as e:
+            logger.warning(f"tree-sitter-python not available: {e}")
+            logger.info("Install it with: pip install tree-sitter-python")
+            self._parser_errors["python"] = f"Import error: {e}"
+        except Exception as e:
+            logger.error(f"Failed to load Python parser: {e}")
+            self._parser_errors["python"] = f"Unexpected error: {e}"
+    
+    def is_ready(self) -> bool:
+        """Check if chunker is ready (has at least one working parser)."""
+        return len(self._parsers) > 0
+    
+    def get_parser_errors(self) -> dict:
+        """Get any parser loading errors."""
+        return self._parser_errors.copy()
     
     def _get_parser(self, language: str) -> Optional[Parser]:
         """Get parser for a language."""
         if language not in self._parsers:
             return None
         
-        parser = Parser()
-        parser.set_language(self._parsers[language])
-        return parser
+        try:
+            parser = Parser()
+            language_obj = self._parsers[language]
+            
+            # Assign language directly (this is the correct API for tree-sitter 0.20+)
+            parser.language = language_obj
+            return parser
+        except AttributeError as e:
+            logger.error(f"Error setting language for {language}: {e}")
+            logger.error("This usually indicates a tree-sitter version mismatch.")
+            logger.error("Please ensure tree-sitter>=0.20.0,<0.22.0 is installed.")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error creating parser for {language}: {e}")
+            return None
     
     def _detect_language(self, file_path: Path) -> str:
         """Detect language from file extension."""
@@ -93,10 +147,17 @@ class Chunker:
         
         parser = self._get_parser(language)
         if not parser:
+            # No parser available, will fall back to character splitting
             return []
         
         try:
+            # Parse the code
             tree = parser.parse(bytes(code, "utf8"))
+            
+            # Check if tree is valid
+            if not tree or not hasattr(tree, 'root_node'):
+                logger.warning(f"Invalid parse tree for {file_path}")
+                return []
             chunks = []
             
             # Traverse AST to find function/class definitions
@@ -183,8 +244,14 @@ class Chunker:
             
             return chunks
         
-        except Exception:
-            # Parsing failed, return empty list (will fallback)
+        except AttributeError as e:
+            # This is the critical error - set_language or similar API issue
+            logger.error(f"Tree-sitter API error parsing {file_path}: {e}")
+            logger.error("This indicates a tree-sitter version mismatch. Falling back to character-based chunking.")
+            return []
+        except Exception as e:
+            # Other parsing errors - log but don't crash
+            logger.debug(f"AST parsing failed for {file_path}: {e}. Falling back to character-based chunking.")
             return []
     
     def _chunk_by_chars(self, code: str, file_path: Path) -> List[Dict[str, Any]]:

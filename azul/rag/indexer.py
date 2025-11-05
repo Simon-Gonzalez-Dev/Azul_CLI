@@ -141,11 +141,17 @@ class Indexer:
         model_error_shown = False
         
         for text in texts:
-            # Validate text
-            if not text or not isinstance(text, str):
+            # Validate text - ensure it's not empty or whitespace only
+            if not text or not isinstance(text, str) or not text.strip():
                 # Return None for invalid texts to maintain mapping
+                logger.debug(f"Skipping empty text for embedding")
                 embeddings.append(None)
                 continue
+            
+            # Skip if text is too long (Ollama has limits)
+            if len(text) > 8192:  # Reasonable limit
+                logger.debug(f"Text too long for embedding ({len(text)} chars), truncating")
+                text = text[:8192]
             
             try:
                 response = ollama.embeddings(
@@ -155,7 +161,7 @@ class Indexer:
                 if "embedding" in response and response["embedding"]:
                     embeddings.append(response["embedding"])
                 else:
-                    logger.warning("Empty embedding response")
+                    logger.debug("Empty embedding response")
                     embeddings.append(None)
             except Exception as e:
                 error_msg = str(e)
@@ -165,8 +171,12 @@ class Indexer:
                         self.formatter.print_info(f"Please run: ollama pull {self.embedding_model}")
                         model_error_shown = True
                     embeddings.append(None)
+                elif "EOF" in error_msg or "500" in error_msg:
+                    # This usually means invalid input or server error
+                    logger.debug(f"Embedding generation failed (likely invalid input): {e}")
+                    embeddings.append(None)
                 else:
-                    logger.warning(f"Error generating embedding: {e}")
+                    logger.debug(f"Error generating embedding: {e}")
                     embeddings.append(None)
         
         return embeddings
@@ -183,6 +193,28 @@ class Indexer:
         """
         start_time = time.time()
         metrics = MetricsCollector()
+        metrics.start_indexing()
+        
+        # Pre-flight check: Verify chunker is ready
+        if not self.chunker.is_ready():
+            parser_errors = self.chunker.get_parser_errors()
+            error_msg = "Tree-sitter parsers failed to load. Cannot proceed with indexing.\n"
+            if parser_errors:
+                error_msg += "Errors:\n"
+                for lang, err in parser_errors.items():
+                    error_msg += f"  - {lang}: {err}\n"
+            error_msg += "\nPlease ensure tree-sitter and tree-sitter-python are correctly installed."
+            self.formatter.print_error(error_msg)
+            return {
+                "indexing_time": 0.0,
+                "files_indexed": 0,
+                "files_list": [],
+                "chunks_created": 0,
+                "index_size_mb": 0.0,
+                "peak_ram_mb": 0.0,
+                "peak_vram_mb": None,
+                "errors": ["Tree-sitter parser initialization failed"]
+            }
         
         if clean:
             self.vector_db.clear()
@@ -199,6 +231,7 @@ class Indexer:
         
         files_indexed = []
         all_chunks = []
+        processing_errors = []  # Aggregate errors instead of spamming
         
         # Process files with progress bar
         with Progress(
@@ -215,24 +248,53 @@ class Indexer:
             # Process files in batches
             for file_path in files:
                 try:
+                    # Update RAM tracking periodically
+                    metrics.update_indexing_ram()
+                    
                     # Read file with defensive handling
                     try:
                         content, error = self.file_handler.read_file(str(file_path))
                         if error:
-                            logger.warning(f"Skipping {file_path}: {error}")
-                            self.formatter.print_warning(f"Skipping {file_path}: {error}")
+                            # Store error for summary, don't spam console
+                            processing_errors.append({
+                                "file": str(file_path),
+                                "error": f"Read error: {error}"
+                            })
+                            logger.debug(f"Skipping {file_path}: {error}")
                             progress.update(file_task, advance=1)
                             continue
                         
                         # Explicitly check for None or empty content
                         if content is None or not isinstance(content, str) or not content.strip():
-                            logger.warning(f"Skipping empty or unreadable file: {file_path}")
-                            self.formatter.print_warning(f"Skipping empty or unreadable file: {file_path}")
+                            processing_errors.append({
+                                "file": str(file_path),
+                                "error": "Empty or unreadable file"
+                            })
+                            logger.debug(f"Skipping empty file: {file_path}")
                             progress.update(file_task, advance=1)
                             continue
                         
                         # Chunk file - always returns a list (never None)
-                        chunks = self.chunker.chunk_file(file_path, content)
+                        try:
+                            chunks = self.chunker.chunk_file(file_path, content)
+                        except AttributeError as e:
+                            # Critical: Tree-sitter API error - this is a fatal error for this file
+                            processing_errors.append({
+                                "file": str(file_path),
+                                "error": f"Tree-sitter parsing error: {str(e)}"
+                            })
+                            logger.error(f"Tree-sitter error processing {file_path}: {e}")
+                            progress.update(file_task, advance=1)
+                            continue
+                        except Exception as e:
+                            # Other chunking errors - log and continue
+                            processing_errors.append({
+                                "file": str(file_path),
+                                "error": f"Chunking error: {str(e)}"
+                            })
+                            logger.debug(f"Chunking failed for {file_path}: {e}")
+                            progress.update(file_task, advance=1)
+                            continue
                         
                         # Ensure chunks is a list
                         if chunks is None:
@@ -252,8 +314,8 @@ class Indexer:
                         for chunk in chunks:
                             if chunk and isinstance(chunk, dict):
                                 # Validate required fields - ensure content is a non-empty string
-                                content = chunk.get("content")
-                                if (content and isinstance(content, str) and content.strip() and 
+                                chunk_content = chunk.get("content")
+                                if (chunk_content and isinstance(chunk_content, str) and chunk_content.strip() and 
                                     chunk.get("chunk_hash") is not None):
                                     # Set relative file path (ensure it's a string, not None)
                                     if rel_path_str:
@@ -264,7 +326,7 @@ class Indexer:
                                         chunk["file_path"] = "unknown"
                                     valid_chunks.append(chunk)
                                 else:
-                                    logger.warning(f"Skipping invalid chunk from {file_path}: missing or invalid content/hash")
+                                    logger.debug(f"Skipping invalid chunk from {file_path}: missing or invalid content/hash")
                         
                         if valid_chunks:
                             all_chunks.extend(valid_chunks)
@@ -278,19 +340,36 @@ class Indexer:
                         progress.update(chunk_task, total=len(all_chunks))
                     
                     except UnicodeDecodeError as e:
-                        logger.error(f"Unicode decode error for {file_path}: {e}", exc_info=True)
-                        self.formatter.print_warning(f"Skipping file with encoding issues: {file_path}")
+                        processing_errors.append({
+                            "file": str(file_path),
+                            "error": f"Encoding error: {str(e)}"
+                        })
+                        logger.debug(f"Unicode decode error for {file_path}: {e}")
                         progress.update(file_task, advance=1)
                         continue
                     except IOError as e:
-                        logger.error(f"IO error reading {file_path}: {e}", exc_info=True)
-                        self.formatter.print_warning(f"Skipping file due to IO error: {file_path}")
+                        processing_errors.append({
+                            "file": str(file_path),
+                            "error": f"IO error: {str(e)}"
+                        })
+                        logger.debug(f"IO error reading {file_path}: {e}")
+                        progress.update(file_task, advance=1)
+                        continue
+                    except PermissionError as e:
+                        processing_errors.append({
+                            "file": str(file_path),
+                            "error": f"Permission denied: {str(e)}"
+                        })
+                        logger.debug(f"Permission error reading {file_path}: {e}")
                         progress.update(file_task, advance=1)
                         continue
                 
                 except Exception as e:
-                    logger.error(f"Failed to process file {file_path}: {e}", exc_info=True)
-                    self.formatter.print_warning(f"Error processing {file_path}: {e}")
+                    processing_errors.append({
+                        "file": str(file_path),
+                        "error": f"Unexpected error: {str(e)}"
+                    })
+                    logger.debug(f"Failed to process file {file_path}: {e}")
                     progress.update(file_task, advance=1)
                     continue
             
@@ -309,6 +388,9 @@ class Indexer:
                         batch_items.append((chunk, chunk["content"]))
                 
                 if batch_items:
+                    # Update RAM tracking during embedding generation
+                    metrics.update_indexing_ram()
+                    
                     # Generate embeddings for all texts
                     batch_texts = [item[1] for item in batch_items]
                     batch_embeddings = self._generate_embeddings_batch(batch_texts)
@@ -333,6 +415,8 @@ class Indexer:
                     embeddings = embeddings[:min_len]
                 
                 store_task = progress.add_task("Storing in vector database...", total=len(valid_chunks_for_storage))
+                # Update RAM before storing
+                metrics.update_indexing_ram()
                 self.vector_db.add_chunks(valid_chunks_for_storage, embeddings)
                 progress.update(store_task, completed=len(valid_chunks_for_storage))
                 
@@ -341,6 +425,9 @@ class Indexer:
         
         indexing_time = time.time() - start_time
         
+        # Final RAM update
+        metrics.update_indexing_ram()
+        
         # Get metrics
         indexing_metrics = metrics.get_indexing_metrics(
             indexing_time,
@@ -348,6 +435,24 @@ class Indexer:
             len(all_chunks),
             self.project_root / ".azul_index"
         )
+        
+        # Add error summary to metrics
+        if processing_errors:
+            indexing_metrics["processing_errors"] = processing_errors
+            indexing_metrics["error_count"] = len(processing_errors)
+            
+            # Display error summary if there are errors
+            if len(processing_errors) > 0:
+                self.formatter.console.print(f"\n[yellow]⚠️  Warning: {len(processing_errors)} file(s) could not be processed[/yellow]")
+                if len(processing_errors) <= 5:
+                    for err in processing_errors:
+                        self.formatter.console.print(f"  - {err['file']}: {err['error']}")
+                else:
+                    # Show first 5 errors
+                    for err in processing_errors[:5]:
+                        self.formatter.console.print(f"  - {err['file']}: {err['error']}")
+                    self.formatter.console.print(f"  ... and {len(processing_errors) - 5} more errors (check logs for details)")
+                self.formatter.console.print()
         
         return indexing_metrics
     

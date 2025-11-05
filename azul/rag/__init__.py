@@ -41,7 +41,23 @@ class RAGManager:
             try:
                 import ollama
                 models = ollama.list()
-                local_models = [m["name"] for m in models.get("models", [])]
+                # Handle different response structures
+                if isinstance(models, dict):
+                    models_list = models.get("models", [])
+                elif isinstance(models, list):
+                    models_list = models
+                else:
+                    models_list = []
+                
+                local_models = []
+                for m in models_list:
+                    if isinstance(m, dict):
+                        name = m.get("name") or m.get("model")
+                        if name:
+                            local_models.append(name)
+                    elif isinstance(m, str):
+                        local_models.append(m)
+                
                 embedding_model = rag_config.get("embedding_model", "nomic-embed-text")
                 if embedding_model not in local_models:
                     default_enabled = False
@@ -102,6 +118,9 @@ class RAGManager:
         # Start metrics collection
         self.metrics.start_query()
         
+        # Start retrieval timing (before embedding generation)
+        self.metrics.start_retrieval()
+        
         # Retrieve chunks
         chunks = self.retriever.retrieve(query)
         self.metrics.record_retrieval(len(chunks))
@@ -127,13 +146,46 @@ class RAGManager:
         if not metrics:
             return None
         
-        # Format: 📊 [Latency: 3.5s | Performance: 85.2 tok/s | Context: 5 chunks from 3 files]
-        latency = metrics.get("total_time", 0)
+        # Format according to specification:
+        # 📊 Stats:
+        #   - Latency: X.XXs (Retrieval: XXXms | TTFT: X.XXs | Generation: X.XXs)
+        #   - Tokens: XXXX prompt | XXX generated
+        #   - Performance: XX.X tokens/sec
+        #   - Context: X chunks from X files
+        
+        total_time = metrics.get("total_time", 0)
+        retrieval_time = metrics.get("retrieval_time", 0)
+        ttft_ms = metrics.get("ttft_ms", 0)
+        generation_time = metrics.get("generation_time", 0)
+        input_tokens = metrics.get("input_tokens", 0)
+        output_tokens = metrics.get("output_tokens", 0)
         tokens_per_sec = metrics.get("tokens_per_second", 0)
         chunks_count = metrics.get("retrieved_chunks", 0)
         files_count = metrics.get("source_files", 0)
         
-        return f"📊 [Latency: {latency:.1f}s | Performance: {tokens_per_sec:.1f} tok/s | Context: {chunks_count} chunks from {files_count} files]"
+        # Format retrieval time
+        retrieval_str = f"{retrieval_time:.0f}ms" if retrieval_time > 0 else "0ms"
+        
+        # Format TTFT (convert ms to seconds)
+        ttft_sec = ttft_ms / 1000.0 if ttft_ms > 0 else 0
+        ttft_str = f"{ttft_sec:.2f}s" if ttft_sec > 0 else "0.00s"
+        
+        # Format generation time
+        gen_str = f"{generation_time:.2f}s" if generation_time > 0 else "0.00s"
+        
+        stats_lines = [
+            "📊 Stats:",
+            f"  - Latency: {total_time:.2f}s (Retrieval: {retrieval_str} | TTFT: {ttft_str} | Generation: {gen_str})",
+            f"  - Tokens: {input_tokens} prompt | {output_tokens} generated",
+            f"  - Performance: {tokens_per_sec:.1f} tokens/sec",
+            f"  - Context: {chunks_count} chunks from {files_count} files"
+        ]
+        
+        return "\n".join(stats_lines)
+    
+    def start_ttft(self) -> None:
+        """Start timing TTFT (call when prompt is sent to LLM)."""
+        self.metrics.start_ttft()
     
     def record_ttft(self, ttft_ms: float) -> None:
         """Record time to first token."""
