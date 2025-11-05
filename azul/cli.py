@@ -4,6 +4,7 @@ import click
 from pathlib import Path
 
 from azul.repl import start_repl
+from azul.env_checker import validate_environment
 
 
 @click.command()
@@ -12,6 +13,9 @@ from azul.repl import start_repl
 @click.option('--project-root', '-p', type=click.Path(), help='Project root directory')
 def main(file, model, project_root):
     """AZUL CLI - A Claude-like coding assistant with local LLMs."""
+    
+    # Validate environment silently - don't show warnings if Ollama is connected
+    chat_available, rag_available = validate_environment()
     
     # Determine project root
     if project_root:
@@ -30,6 +34,12 @@ def main(file, model, project_root):
         from azul.ollama_client import get_ollama_client
         ollama = get_ollama_client()
         ollama.set_model(model)
+    
+    # Disable RAG if embedding model not available
+    if not rag_available:
+        from azul.config.manager import get_config_manager
+        config = get_config_manager()
+        config.set("rag", {**config.get("rag", {}), "enabled_by_default": False})
     
     # If file provided, add it to context and start conversation
     if file:

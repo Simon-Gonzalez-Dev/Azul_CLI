@@ -77,8 +77,24 @@ Be conversational and context-aware. Reference files and code naturally when the
         """
         try:
             # Check if model exists
-            models = ollama.list()
-            model_names = [m['name'] for m in models.get('models', [])]
+            models_response = ollama.list()
+            
+            # Handle different response structures
+            model_names = []
+            if isinstance(models_response, dict):
+                models_list = models_response.get("models", [])
+            elif isinstance(models_response, list):
+                models_list = models_response
+            else:
+                models_list = []
+            
+            for m in models_list:
+                if isinstance(m, dict):
+                    name = m.get("name") or m.get("model")
+                    if name:
+                        model_names.append(name)
+                elif isinstance(m, str):
+                    model_names.append(m)
             
             # Check for exact match or partial match
             if model in model_names:
@@ -93,9 +109,12 @@ Be conversational and context-aware. Reference files and code naturally when the
                         f"Model '{model}' not found. Did you mean: {', '.join(similar[:3])}"
                     )
                 else:
-                    self.formatter.print_error(
-                        f"Model '{model}' not found. Available models: {', '.join(model_names[:5])}"
-                    )
+                    if model_names:
+                        self.formatter.print_error(
+                            f"Model '{model}' not found. Available models: {', '.join(model_names[:5])}"
+                        )
+                    else:
+                        self.formatter.print_error(f"Model '{model}' not found.")
                 return False
         except Exception as e:
             self.formatter.print_error(f"Error checking models: {e}")

@@ -5,6 +5,7 @@ azul/cli.py
 azul/command_parser.py
 azul/context.py
 azul/editor.py
+azul/env_checker.py
 azul/file_handler.py
 azul/file_monitor.py
 azul/formatter.py
@@ -17,6 +18,13 @@ azul/commands/__init__.py
 azul/commands/handlers.py
 azul/config/__init__.py
 azul/config/manager.py
+azul/rag/__init__.py
+azul/rag/augmenter.py
+azul/rag/chunker.py
+azul/rag/indexer.py
+azul/rag/metrics.py
+azul/rag/retriever.py
+azul/rag/vector_db.py
 azul_cli.egg-info/PKG-INFO
 azul_cli.egg-info/SOURCES.txt
 azul_cli.egg-info/dependency_links.txt

@@ -62,6 +62,14 @@ class CommandHandler:
             return self.handle_clear()
         elif cmd == 'reset':
             return self.handle_reset()
+        elif cmd == 'index':
+            return self.handle_index(parsed.args)
+        elif cmd == 'rag':
+            return self.handle_rag(parsed.args)
+        elif cmd == 'stats':
+            return self.handle_stats(parsed.args)
+        elif cmd == 'context':
+            return self.handle_context()
         elif cmd == 'help':
             return self.handle_help()
         elif cmd == 'exit' or cmd == 'quit':
@@ -357,12 +365,206 @@ Available @ commands:
   @cd <dir>              - Change directory
   @clear                 - Clear terminal screen
   @reset                 - Clear conversation history
+  @index [--clean]        - Index project for RAG (--clean rebuilds from scratch)
+  @rag [on/off]          - Toggle RAG pipeline on/off
+  @stats [on/off]        - Toggle performance stats display on/off
+  @context               - Show RAG context from last prompt (debugging)
   @help                  - Show this help message
   @exit / @quit          - Exit AZUL
 
 Everything else is treated as a natural language prompt to the AI.
 """
         self.formatter.console.print(help_text)
+        return True, None
+    
+    def handle_index(self, args: list) -> Tuple[bool, Optional[str]]:
+        """Handle @index command."""
+        from azul.rag import get_rag_manager
+        from pathlib import Path
+        
+        # Check for --clean flag
+        clean = False
+        if args:
+            # Filter out None values and join
+            clean_args = [str(arg) for arg in args if arg is not None]
+            if clean_args:
+                clean = '--clean' in ' '.join(clean_args)
+        
+        # Get RAG manager (create if doesn't exist)
+        project_root = Path.cwd()
+        rag_manager = get_rag_manager(project_root)
+        if rag_manager is None:
+            # Create RAG manager
+            from azul.rag import RAGManager
+            rag_manager = RAGManager(project_root)
+            from azul.rag import reset_rag_manager
+            reset_rag_manager()
+            # Set it globally
+            get_rag_manager(project_root)
+        
+        # Check if index exists and ask for confirmation
+        if rag_manager.index_exists() and not clean:
+            self.formatter.print_warning("Index already exists. Use @index --clean to rebuild from scratch.")
+            # Still proceed with incremental update
+            clean = False
+        
+        # Perform indexing
+        try:
+            metrics = rag_manager.index(clean=clean)
+            
+            # Display metrics
+            self.formatter.console.print("\n[bold green]Indexing complete![/bold green]")
+            self.formatter.console.print(f"  Files indexed: {metrics.get('files_indexed', 0)}")
+            self.formatter.console.print(f"  Chunks created: {metrics.get('chunks_created', 0)}")
+            self.formatter.console.print(f"  Index size: {metrics.get('index_size_mb', 0):.2f} MB")
+            self.formatter.console.print(f"  Time: {metrics.get('indexing_time', 0):.2f}s")
+            self.formatter.console.print()
+            
+            return True, None
+        except Exception as e:
+            return False, f"Error indexing: {e}"
+    
+    def handle_rag(self, args: list) -> Tuple[bool, Optional[str]]:
+        """Handle @rag command."""
+        from azul.rag import get_rag_manager, RAGManager
+        from pathlib import Path
+        
+        project_root = Path.cwd()
+        rag_manager = get_rag_manager(project_root)
+        if rag_manager is None:
+            # Create RAG manager
+            rag_manager = RAGManager(project_root)
+            from azul.rag import reset_rag_manager
+            reset_rag_manager()
+            get_rag_manager(project_root)
+        
+        # Parse arguments
+        if args and len(args) > 0:
+            arg = args[0].lower()
+            if arg == 'on':
+                rag_manager.set_rag(True)
+                self.formatter.print_info("[INFO] RAG pipeline enabled")
+            elif arg == 'off':
+                rag_manager.set_rag(False)
+                self.formatter.print_info("[INFO] RAG pipeline disabled")
+            else:
+                # Toggle
+                new_state = rag_manager.toggle_rag()
+                status = "enabled" if new_state else "disabled"
+                self.formatter.print_info(f"[INFO] RAG pipeline {status}")
+        else:
+            # Toggle
+            new_state = rag_manager.toggle_rag()
+            status = "enabled" if new_state else "disabled"
+            self.formatter.print_info(f"[INFO] RAG pipeline {status}")
+        
+        return True, None
+    
+    def handle_stats(self, args: list) -> Tuple[bool, Optional[str]]:
+        """Handle @stats command."""
+        from azul.rag import get_rag_manager, RAGManager
+        from pathlib import Path
+        
+        project_root = Path.cwd()
+        rag_manager = get_rag_manager(project_root)
+        if rag_manager is None:
+            # Create RAG manager
+            rag_manager = RAGManager(project_root)
+            from azul.rag import reset_rag_manager
+            reset_rag_manager()
+            get_rag_manager(project_root)
+        
+        # Parse arguments
+        if args and len(args) > 0:
+            arg = args[0].lower()
+            if arg == 'on':
+                rag_manager.set_stats(True)
+                self.formatter.print_info("[INFO] Performance stats will now be displayed")
+            elif arg == 'off':
+                rag_manager.set_stats(False)
+                self.formatter.print_info("[INFO] Performance stats will now be hidden")
+            else:
+                # Toggle
+                new_state = rag_manager.toggle_stats()
+                status = "displayed" if new_state else "hidden"
+                self.formatter.print_info(f"[INFO] Performance stats will now be {status}")
+        else:
+            # Toggle
+            new_state = rag_manager.toggle_stats()
+            status = "displayed" if new_state else "hidden"
+            self.formatter.print_info(f"[INFO] Performance stats will now be {status}")
+        
+        return True, None
+    
+    def handle_context(self) -> Tuple[bool, Optional[str]]:
+        """Handle @context command - show RAG context from last prompt."""
+        from azul.rag import get_rag_manager, RAGManager
+        from pathlib import Path
+        
+        project_root = Path.cwd()
+        rag_manager = get_rag_manager(project_root)
+        if rag_manager is None:
+            # Create RAG manager
+            rag_manager = RAGManager(project_root)
+            from azul.rag import reset_rag_manager
+            reset_rag_manager()
+            get_rag_manager(project_root)
+        
+        if not rag_manager.rag_enabled:
+            self.formatter.print_warning("RAG is currently disabled. Enable it with @rag on")
+            return True, None
+        
+        if not rag_manager.index_exists():
+            self.formatter.print_warning("No index found. Create one with @index")
+            return True, None
+        
+        # Get last user message from session
+        history = self.session.get_recent_history()
+        if not history:
+            self.formatter.print_info("No conversation history yet. Ask a question first.")
+            return True, None
+        
+        # Find last user message
+        last_user_msg = None
+        for msg in reversed(history):
+            if msg.get("role") == "user":
+                last_user_msg = msg.get("content", "")
+                break
+        
+        if not last_user_msg:
+            self.formatter.print_info("No user message found in history.")
+            return True, None
+        
+        # Perform retrieval (same as in RAG pipeline)
+        chunks = rag_manager.retriever.retrieve(last_user_msg)
+        
+        # Build augmented prompt
+        augmented_prompt = rag_manager.augmenter.augment(
+            last_user_msg,
+            chunks,
+            history
+        )
+        
+        # Display context
+        self.formatter.console.print("\n[bold cyan]=== RAG Context Debug ===[/bold cyan]\n")
+        self.formatter.console.print(f"[bold]Last User Prompt:[/bold] {last_user_msg}\n")
+        
+        if chunks:
+            self.formatter.console.print(f"[bold]Retrieved Chunks ({len(chunks)}):[/bold]")
+            for i, chunk in enumerate(chunks, 1):
+                file_path = chunk.get("file_path", "unknown")
+                start_line = chunk.get("start_line", 0)
+                end_line = chunk.get("end_line", 0)
+                content = chunk.get("content", "")[:200]  # First 200 chars
+                self.formatter.console.print(f"\n  [{i}] {file_path}:{start_line}-{end_line}")
+                self.formatter.print_code_block(content, "python")
+        else:
+            self.formatter.console.print("[yellow]No chunks retrieved[/yellow]\n")
+        
+        self.formatter.console.print(f"\n[bold]Full Augmented Prompt:[/bold]")
+        self.formatter.print_code_block(augmented_prompt, "text")
+        self.formatter.console.print()
+        
         return True, None
     
     def handle_exit(self) -> Tuple[bool, Optional[str]]:
