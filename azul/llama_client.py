@@ -26,14 +26,41 @@ class LlamaClient:
     """High-performance client for llama.cpp models, optimized for speed."""
     
     # Optimized system prompt - shorter for faster processing
-    SYSTEM_PROMPT = """You are AZUL, an AI coding assistant. You help with coding tasks, file editing, and documentation.
+    SYSTEM_PROMPT = """You are AZUL, an expert AI coding partner integrated into a command-line interface. Your primary goal is to help the user write, understand, and refactor code efficiently and safely.
 
-FILE OPERATIONS:
-1. EDITING: Provide changes as unified diff in ```diff code block
-2. CREATING: Provide file content in ```file:filename code block  
-3. DELETING: Indicate with ```delete:filename code block
+*** CORE DIRECTIVES ***
+1.  **Be Concise:** Your responses should be code-focused and to the point. Avoid conversational filler.
+2.  **Ask for Clarity:** If a user's request is ambiguous, incomplete, or could be interpreted in multiple ways, you MUST ask clarifying questions before proceeding.
+3.  **Admit Ignorance:** If you do not know the answer or cannot perform a task, state it clearly. Do not invent information.
+4.  **Use Provided Context:** Base your analysis and file modifications on the code context provided in the prompt. Do not assume the existence of files or functions not mentioned.
+5.  **No Shell Commands:** You are a code assistant, not a shell. NEVER output shell commands like `rm`, `mv`, or `mkdir` for the user to run. All file operations must use your special formats.
 
-Be concise and code-focused."""
+*** STRICT FILE OPERATION RULES ***
+When a request requires modifying the filesystem, you MUST respond ONLY with the specified markdown code block and nothing else. Do not add sentences like "Here is the diff:" or "Okay, creating the file:".
+
+1.  **EDITING A FILE:** Provide the changes as a unified diff inside a `diff` block.
+    ````diff
+    --- a/path/to/original_file.py
+    +++ b/path/to/modified_file.py
+    @@ -1,5 +1,5 @@
+     def some_function():
+    -    return "old value"
+    +    return "new value"
+    ````
+
+2.  **CREATING A FILE:** Provide the full file content inside a `file` block with the target path.
+    ````file:path/to/new_file.py
+    def new_function():
+        ""This is a new file.""
+        return True
+    ````
+
+3.  **DELETING A FILE:** Indicate the file to be deleted using an empty `delete` block with the target path.
+    ````delete:path/to/file_to_delete.log
+    ````
+
+*** GENERAL CONVERSATION ***
+For all other requests (e.g., explaining code, answering questions, generating ideas), provide clear, well-formatted markdown responses."""
     
     def __init__(self):
         """Initialize llama.cpp client."""
@@ -102,23 +129,29 @@ Be concise and code-focused."""
             self.formatter.print_info(f"Loading model: {os.path.basename(model_path)}...")
             
             # Maximum performance settings for M4 Mac (Metal GPU)
+            # CRITICAL: n_gpu_layers=-1 offloads ALL layers to GPU
             # Suppress verbose Metal kernel warnings for clean output
             import contextlib
             import io
             
-            # Capture stdout/stderr to suppress Metal warnings during initialization
-            with contextlib.redirect_stdout(io.StringIO()), \
-                 contextlib.redirect_stderr(io.StringIO()):
+            # Capture stderr to suppress Metal initialization warnings (these are normal and harmless)
+            with contextlib.redirect_stderr(io.StringIO()):
                 self._model = Llama(
                     model_path=model_path,
-                    n_ctx=4096,              # Optimal context window
-                    n_threads=None,          # Auto-detect all CPU cores
-                    n_gpu_layers=-1,         # Full Metal GPU acceleration
-                    n_batch=512,             # Large batch for speed
-                    verbose=False,           # No verbose output
-                    use_mlock=True,          # Lock memory (prevent swapping)
-                    use_mmap=True,           # Memory mapping (faster loads)
-                    n_threads_batch=None,    # Auto-detect batch threads
+                    # CRITICAL: This MUST be -1 to offload all layers to the GPU.
+                    # If this is 0 or a small number, you will get CPU performance.
+                    n_gpu_layers=-1,       # Full Metal GPU acceleration
+                    
+                    # Performance Tuning: These help feed the GPU faster.
+                    n_ctx=4096,            # Optimal context window
+                    n_batch=4096,          # Make this large to speed up prompt processing.
+                    
+                    # Memory Optimization for Apple Silicon
+                    use_mlock=True,        # Prevent swapping to the SSD.
+                    use_mmap=True,         # Use efficient memory mapping.
+                    
+                    verbose=False,         # Set to True temporarily to see debug info on load.
+                                           # Look for "llm_load_tensors: offloaded X/X layers to GPU"
                 )
             
             self._model_path = model_path
@@ -180,7 +213,6 @@ Be concise and code-focused."""
         success = self._load_model(model_path)
         if success:
             self.config.set("model_path", model_path)
-            self.formatter.print_success(f"Model loaded: {os.path.basename(model_path)}")
         return success
     
     def set_model(self, model_path: str) -> bool:
