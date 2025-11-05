@@ -9,7 +9,7 @@ setup(
     name="azul-cli",
     version="0.1.0",
     author="AZUL CLI",
-    description="A Claude-like coding assistant with local LLMs via Ollama",
+    description="A Claude-like coding assistant with local LLMs via llama.cpp",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/yourusername/azul-cli",
@@ -28,7 +28,7 @@ setup(
     install_requires=[
         "click>=8.0.0",
         "prompt-toolkit>=3.0.0",
-        "ollama>=0.1.0",
+        "llama-cpp-python>=0.2.0",
         "rich>=13.0.0",
         "tree-sitter>=0.20.0",
         "tree-sitter-python>=0.20.0",

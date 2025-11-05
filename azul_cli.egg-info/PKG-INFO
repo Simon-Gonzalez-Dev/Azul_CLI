@@ -1,7 +1,7 @@
 Metadata-Version: 2.4
 Name: azul-cli
 Version: 0.1.0
-Summary: A Claude-like coding assistant with local LLMs via Ollama
+Summary: A Claude-like coding assistant with local LLMs via llama.cpp
 Home-page: https://github.com/yourusername/azul-cli
 Author: AZUL CLI
 Classifier: Development Status :: 3 - Alpha
@@ -16,7 +16,7 @@ Requires-Python: >=3.10
 Description-Content-Type: text/markdown
 Requires-Dist: click>=8.0.0
 Requires-Dist: prompt-toolkit>=3.0.0
-Requires-Dist: ollama>=0.1.0
+Requires-Dist: llama-cpp-python>=0.2.0
 Requires-Dist: rich>=13.0.0
 Requires-Dist: tree-sitter>=0.20.0
 Requires-Dist: tree-sitter-python>=0.20.0

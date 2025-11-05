@@ -9,12 +9,12 @@ from azul.env_checker import validate_environment
 
 @click.command()
 @click.argument('file', required=False, type=click.Path(exists=True))
-@click.option('--model', '-m', help='Ollama model to use')
+@click.option('--model', '-m', help='Path to .gguf model file')
 @click.option('--project-root', '-p', type=click.Path(), help='Project root directory')
 def main(file, model, project_root):
     """AZUL CLI - A Claude-like coding assistant with local LLMs."""
     
-    # Validate environment silently - don't show warnings if Ollama is connected
+    # Validate environment silently
     chat_available, _ = validate_environment()
     
     # Determine project root
@@ -31,9 +31,9 @@ def main(file, model, project_root):
     
     # Set model if provided
     if model:
-        from azul.ollama_client import get_ollama_client
-        ollama = get_ollama_client()
-        ollama.set_model(model)
+        from azul.llama_client import get_llama_client
+        llama = get_llama_client()
+        llama.set_model_path(model)
     
     # If file provided, display it and start conversation
     if file:

@@ -10,7 +10,7 @@ class ConfigManager:
     """Manages JSON configuration file for AZUL CLI."""
     
     DEFAULT_CONFIG = {
-        "model": "qwen2.5-coder:14b",
+        "model_path": None,  # Path to .gguf model file
         "temperature": 0.7,
         "max_history_messages": 20,
         "max_file_size_mb": 10,

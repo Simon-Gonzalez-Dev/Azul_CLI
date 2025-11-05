@@ -8,7 +8,8 @@ azul/env_checker.py
 azul/file_handler.py
 azul/file_monitor.py
 azul/formatter.py
-azul/ollama_client.py
+azul/llama_client.py
+azul/metrics.py
 azul/permissions.py
 azul/repl.py
 azul/sandbox.py

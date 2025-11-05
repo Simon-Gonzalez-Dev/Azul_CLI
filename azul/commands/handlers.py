@@ -1,10 +1,11 @@
 """Command handlers for @ commands."""
 
+import sys
 from pathlib import Path
 from typing import Optional, Tuple
 
 from azul.command_parser import ParsedCommand
-from azul.ollama_client import get_ollama_client
+from azul.llama_client import get_llama_client
 from azul.session_manager import get_session_manager
 from azul.file_handler import get_file_handler
 from azul.editor import get_editor
@@ -16,7 +17,7 @@ class CommandHandler:
     
     def __init__(self):
         """Initialize command handler."""
-        self.ollama = get_ollama_client()
+        self.llama = get_llama_client()
         self.session = get_session_manager()
         self.file_handler = get_file_handler()
         self.editor = get_editor()
@@ -71,14 +72,27 @@ class CommandHandler:
     
     def handle_model(self, args: list) -> Tuple[bool, Optional[str]]:
         """Handle @model command."""
+        # Filter out None values from regex optional groups
+        args = [a for a in args if a is not None]
+        
         if not args:
-            current_model = self.ollama.get_model()
-            self.formatter.print_info(f"Current model: {current_model}")
+            # Show current model
+            current_model = self.llama.get_model()
+            if hasattr(self.llama, '_model_path') and self.llama._model_path:
+                full_path = self.llama._model_path
+                self.formatter.console.print(f"[bold]Current model:[/bold] {current_model}")
+                self.formatter.console.print(f"[dim]Path: {full_path}[/dim]")
+            else:
+                self.formatter.print_info(f"Current model: {current_model}")
             return True, None
         
-        model_name = args[0]
-        success = self.ollama.set_model(model_name)
-        return success, None
+        model_path = args[0]
+        # Try to load the model
+        success = self.llama.set_model_path(model_path)
+        if success:
+            return True, None
+        else:
+            return False, f"Failed to load model: {model_path}"
     
     def handle_edit(self, args: list) -> Tuple[bool, Optional[str]]:
         """Handle @edit command."""
@@ -108,17 +122,22 @@ class CommandHandler:
         status = self.formatter.show_status("AZUL is thinking...")
         status.__enter__()
         try:
-            stream = self.ollama.stream_chat(prompt, self.session.get_recent_history())
+            stream = self.llama.stream_chat(prompt, self.session.get_recent_history())
             # Get first token to stop status
             first_token = next(stream, None)
             if first_token:
                 status.__exit__(None, None, None)  # Stop status
-                # Print first token using standard print for streaming
-                import sys
+                # Stream tokens directly for maximum speed
+                response = first_token
                 sys.stdout.write(first_token)
                 sys.stdout.flush()
-                # Stream remaining tokens
-                response = first_token + self.formatter.stream_response(stream)
+                # Stream remaining tokens with minimal overhead
+                for token in stream:
+                    response += token
+                    sys.stdout.write(token)
+                    sys.stdout.flush()
+                sys.stdout.write('\n')
+                sys.stdout.flush()
             else:
                 status.__exit__(None, None, None)
                 response = ""
@@ -276,17 +295,22 @@ class CommandHandler:
         status = self.formatter.show_status("AZUL is thinking...")
         status.__enter__()
         try:
-            stream = self.ollama.stream_chat(prompt, self.session.get_recent_history())
+            stream = self.llama.stream_chat(prompt, self.session.get_recent_history())
             # Get first token to stop status
             first_token = next(stream, None)
             if first_token:
                 status.__exit__(None, None, None)  # Stop status
-                # Print first token using standard print for streaming
-                import sys
+                # Stream tokens directly for maximum speed
+                response = first_token
                 sys.stdout.write(first_token)
                 sys.stdout.flush()
-                # Stream remaining tokens
-                response = first_token + self.formatter.stream_response(stream)
+                # Stream remaining tokens with minimal overhead
+                for token in stream:
+                    response += token
+                    sys.stdout.write(token)
+                    sys.stdout.flush()
+                sys.stdout.write('\n')
+                sys.stdout.flush()
             else:
                 status.__exit__(None, None, None)
                 response = ""
@@ -345,7 +369,7 @@ class CommandHandler:
         help_text = """
 Available @ commands:
 
-  @model [name]          - Change Ollama model (or show current model)
+  @model [path]          - Change model path (or show current model)
   @edit <file> <inst>    - Edit a file with instruction
   @create <file> <inst>  - Create a new file with instruction
   @delete <file>         - Delete a file
