@@ -26,6 +26,7 @@ venv/
 env/
 ENV/
 .venv
+pyvenv.cfg
 
 # IDE
 .vscode/
@@ -68,6 +69,7 @@ dmypy.json
 # Environment
 .env
 .env.local
+*.local
 
 # OS
 .DS_Store
@@ -77,4 +79,14 @@ Thumbs.db
 *.tmp
 *.temp
 *.bak
-*.swp
+*.orig
+
+# User-specific files
+startup.txt
+
+# Node.js (if accidentally added)
+package-lock.json
+node_modules/
+
+# Python version management
+.python-version

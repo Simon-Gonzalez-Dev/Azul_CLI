@@ -33,6 +33,9 @@ setup(
         "tree-sitter>=0.20.0",
         "tree-sitter-python>=0.20.0",
         "watchdog>=3.0.0",
+        "tiktoken>=0.5.0",
+        "psutil>=5.9.0",
+        "gitignore-parser>=0.1.0",
     ],
     entry_points={
         "console_scripts": [
