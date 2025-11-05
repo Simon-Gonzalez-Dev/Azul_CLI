@@ -2,7 +2,6 @@
 
 from typing import Iterator, Optional, List, Dict
 import os
-import sys
 from pathlib import Path
 
 try:
@@ -104,25 +103,22 @@ Be concise and code-focused."""
             
             # Maximum performance settings for M4 Mac (Metal GPU)
             # Suppress verbose Metal kernel warnings for clean output
-            import sys
-            import io
             import contextlib
-            import os as os_module
+            import io
             
-            # Capture both stdout and stderr to suppress Metal warnings
-            # (Metal prints warnings to stderr during initialization)
+            # Capture stdout/stderr to suppress Metal warnings during initialization
             with contextlib.redirect_stdout(io.StringIO()), \
                  contextlib.redirect_stderr(io.StringIO()):
                 self._model = Llama(
                     model_path=model_path,
-                    n_ctx=4096,
-                    n_threads=None,
-                    n_gpu_layers=-1,
-                    n_batch=512,
-                    verbose=False,
-                    use_mlock=True,
-                    use_mmap=True,
-                    n_threads_batch=None,
+                    n_ctx=4096,              # Optimal context window
+                    n_threads=None,          # Auto-detect all CPU cores
+                    n_gpu_layers=-1,         # Full Metal GPU acceleration
+                    n_batch=512,             # Large batch for speed
+                    verbose=False,           # No verbose output
+                    use_mlock=True,          # Lock memory (prevent swapping)
+                    use_mmap=True,           # Memory mapping (faster loads)
+                    n_threads_batch=None,    # Auto-detect batch threads
                 )
             
             self._model_path = model_path
@@ -275,14 +271,17 @@ Be concise and code-focused."""
                 stop=["<|im_end|>", "<|im_start|>", "User:", "System:"],  # Stop sequences
             )
             
-            # Direct iteration - no unnecessary checks in hot path
+            # Hot path: maximum speed, zero buffering
+            # Direct iteration with minimal attribute access
             for chunk in stream:
-                # Optimized path: direct access, minimal checks
-                if chunk.get('choices'):
-                    choice = chunk['choices'][0]
-                    text = choice.get('text', '')
+                # Single check, direct access - fastest path
+                try:
+                    text = chunk['choices'][0]['text']
                     if text:
                         yield text
+                except (KeyError, IndexError):
+                    # Skip malformed chunks silently for speed
+                    continue
                         
         except Exception as e:
             self.formatter.print_error(f"Error: {e}")
@@ -330,6 +329,3 @@ def get_llama_client() -> LlamaClient:
     return _llama_client
 
 
-# Backward compatibility
-def get_ollama_client():
-    return get_llama_client()

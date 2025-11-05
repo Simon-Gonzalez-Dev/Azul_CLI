@@ -5,7 +5,6 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.syntax import Syntax
 from rich.panel import Panel
-from rich.text import Text
 import re
 
 from azul.config.manager import get_config_manager
