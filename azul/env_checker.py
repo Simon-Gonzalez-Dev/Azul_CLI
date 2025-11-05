@@ -42,15 +42,8 @@ def check_models(config) -> Tuple[bool, bool]:
         chat_model = config.get("model", "qwen2.5-coder:14b")
         chat_available = chat_model in local_models if local_models else True  # Allow if can't check
         
-        # Check embedding model for RAG
-        rag_enabled = config.get("rag", {}).get("enabled_by_default", True)
-        rag_available = False
-        
-        if rag_enabled and local_models:
-            embedding_model = config.get("rag", {}).get("embedding_model", "nomic-embed-text")
-            rag_available = embedding_model in local_models
-        
-        return chat_available, rag_available
+        # RAG removed - return False for rag_available
+        return chat_available, False
         
     except Exception:
         # Silently fail - allow app to start, models will be checked when used

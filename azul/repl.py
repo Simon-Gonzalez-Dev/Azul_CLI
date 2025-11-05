@@ -10,7 +10,6 @@ from azul.command_parser import get_command_parser, ParsedCommand
 from azul.commands.handlers import get_command_handler
 from azul.ollama_client import get_ollama_client
 from azul.session_manager import get_session_manager
-from azul.context import get_context_manager
 from azul.formatter import get_formatter
 from azul.editor import get_editor
 from azul.file_monitor import get_file_monitor
@@ -35,13 +34,12 @@ class REPL:
         self.command_handler.set_repl(self)
         self.ollama = get_ollama_client()
         self.session = get_session_manager(self.project_root)
-        self.context = get_context_manager()
         self.formatter = get_formatter()
         self.editor = get_editor()
         self.config = get_config_manager()
         
         # Setup prompt session with autocomplete
-        commands = ['@model', '@edit', '@create', '@delete', '@read', '@ls', '@path', '@cd', '@clear', '@reset', '@index', '@rag', '@stats', '@context', '@help', '@exit', '@quit']
+        commands = ['@model', '@edit', '@create', '@delete', '@read', '@ls', '@path', '@cd', '@clear', '@reset', '@help', '@exit', '@quit']
         command_completer = WordCompleter(
             commands,
             ignore_case=True,
@@ -58,11 +56,7 @@ class REPL:
             complete_while_typing=True  # Show completions while typing @ and allow Tab to navigate
         )
         
-        # Initialize RAG manager first (before file monitor)
-        from azul.rag import get_rag_manager
-        self.rag_manager = get_rag_manager(self.project_root)
-        
-        # Setup file monitoring (after RAG manager is initialized)
+        # Setup file monitoring
         self.file_monitor = get_file_monitor(self.project_root)
         self.file_monitor.start(self._on_file_change)
         
@@ -71,38 +65,8 @@ class REPL:
     
     def _on_file_change(self, file_path: str) -> None:
         """Handle file change notification (non-intrusive)."""
-        # Trigger incremental re-indexing if RAG is enabled
-        # Check if rag_manager attribute exists (may not be initialized yet)
-        if hasattr(self, 'rag_manager') and self.rag_manager and self.rag_manager.rag_enabled:
-            config = self.config.load_config()
-            if config.get("rag", {}).get("auto_reindex_on_change", True):
-                # Use a timer to batch changes (quiet period)
-                import threading
-                quiet_period = config.get("rag", {}).get("reindex_quiet_period", 5)
-                
-                # Cancel previous timer if exists
-                if hasattr(self, '_reindex_timer'):
-                    self._reindex_timer.cancel()
-                
-                # Schedule re-indexing after quiet period
-                def reindex_file():
-                    try:
-                        # Get relative path
-                        file_path_obj = Path(file_path)
-                        if file_path_obj.is_absolute():
-                            rel_path = file_path_obj.relative_to(self.project_root)
-                        else:
-                            rel_path = file_path_obj
-                        
-                        self.rag_manager.update_index_on_file_change(str(rel_path))
-                        self.formatter.print_info("[INFO] Index updated to reflect recent changes")
-                    except Exception as e:
-                        # Silently fail - don't interrupt user
-                        pass
-                
-                self._reindex_timer = threading.Timer(quiet_period, reindex_file)
-                self._reindex_timer.daemon = True
-                self._reindex_timer.start()
+        # File monitoring for future use
+        pass
     
     def _check_file_notifications(self) -> None:
         """Check and display file change notifications."""
@@ -139,24 +103,8 @@ class REPL:
         import sys
         import tiktoken
         
-        # Retrieve and augment with RAG if enabled
-        query_metrics = {}
-        if self.rag_manager and self.rag_manager.rag_enabled:
-            augmented_prompt, query_metrics = self.rag_manager.retrieve_and_augment(
-                user_input,
-                self.session.get_recent_history()
-            )
-        else:
-            augmented_prompt = user_input
-        
-        # Build context
-        context_str = self.context.build_context(augmented_prompt)
-        
-        # Add context to prompt if available
-        if context_str:
-            full_prompt = f"{context_str}\n\nUser: {augmented_prompt}\n\nAssistant:"
-        else:
-            full_prompt = augmented_prompt
+        # Use user input directly
+        user_message = user_input
         
         # Add to session
         self.session.add_message("user", user_input)
@@ -172,16 +120,13 @@ class REPL:
         
         try:
             stream = self.ollama.stream_chat(
-                full_prompt,
+                user_message,
                 self.session.get_recent_history()
             )
             # Get first token to stop status
             first_token = next(stream, None)
             if first_token:
                 ttft_ms = (time.time() - ttft_start) * 1000
-                if self.rag_manager:
-                    self.rag_manager.record_ttft(ttft_ms)
-                
                 generation_start = time.time()
                 status.__exit__(None, None, None)  # Stop status
                 # Print first token using standard print for streaming
@@ -209,20 +154,8 @@ class REPL:
             self.formatter.print_error(traceback.format_exc())
             response = ""
         
-        # Record generation metrics
-        if generation_start:
-            generation_time = time.time() - generation_start
-            if self.rag_manager:
-                self.rag_manager.record_generation(output_tokens, generation_time)
-        
         # Add response to session
         self.session.add_message("assistant", response)
-        
-        # Display stats if enabled
-        if self.rag_manager:
-            stats_display = self.rag_manager.get_stats_display()
-            if stats_display:
-                self.formatter.console.print(f"\n{stats_display}\n")
         
         # Check for file operations in response
         # 1. Check for file creation
@@ -245,16 +178,7 @@ class REPL:
             return  # Don't check for edits if we deleted a file
         
         # 3. Check if response contains diff (for natural language edits)
-        if "```diff" in response or "--- a/" in response:
-            # Extract file references from context
-            referenced_files = self.context.get_last_referenced_files()
-            if referenced_files:
-                # Try to apply edit to first referenced file
-                file_path = referenced_files[0]
-                self.formatter.print_info(f"\nDetected file edit for: {file_path}")
-                success, error = self.editor.edit_file(file_path, response)
-                if not success and error:
-                    self.formatter.print_warning(f"Could not apply edit: {error}")
+        # Note: File edit detection via diff is disabled (context manager removed)
     
     def change_directory(self, target_dir: str) -> Tuple[bool, Optional[str]]:
         """
@@ -309,29 +233,6 @@ class REPL:
             # Force file handler to get the updated sandbox
             self.command_handler.file_handler.sandbox = get_sandbox(new_dir)
             
-            # Update context manager (it may cache file references)
-            # The context manager will automatically use the updated file handler
-            
-            # Reinitialize RAG manager for new directory
-            from azul.rag import get_rag_manager, reset_rag_manager
-            reset_rag_manager()
-            self.rag_manager = get_rag_manager(new_dir)
-            
-            # Check if index exists and prompt if needed
-            if self.rag_manager and not self.rag_manager.index_exists():
-                config = self.config.load_config()
-                if config.get("rag", {}).get("auto_index_on_start", True):
-                    project_name = new_dir.name
-                    self.formatter.console.print(f"\n[bold yellow]Project '{project_name}' is not indexed.[/bold yellow]")
-                    self.formatter.console.print("Index it now to enable full codebase awareness? (Y/n): ", end="")
-                    try:
-                        response = input().strip().lower()
-                        if response in ('', 'y', 'yes'):
-                            self.rag_manager.index(clean=False)
-                            self.formatter.print_success("Indexing complete! RAG is now enabled.")
-                    except (EOFError, KeyboardInterrupt):
-                        pass
-            
             self.formatter.print_success(f"Changed directory to: {new_dir}")
             # Show updated status
             self.formatter.console.print(f"Directory: {self.project_root}\n")
@@ -365,21 +266,6 @@ class REPL:
         
         # Print welcome message
         self._print_status()
-        
-        # Check for RAG index and prompt if needed
-        if self.rag_manager and not self.rag_manager.index_exists():
-            config = self.config.load_config()
-            if config.get("rag", {}).get("auto_index_on_start", True):
-                project_name = self.project_root.name
-                self.formatter.console.print(f"\n[bold yellow]Project '{project_name}' is not indexed.[/bold yellow]")
-                self.formatter.console.print("Index it now to enable full codebase awareness? (Y/n): ", end="")
-                try:
-                    response = input().strip().lower()
-                    if response in ('', 'y', 'yes'):
-                        self.rag_manager.index(clean=False)
-                        self.formatter.print_success("Indexing complete! RAG is now enabled.")
-                except (EOFError, KeyboardInterrupt):
-                    pass
         
         while self.running:
             try:
