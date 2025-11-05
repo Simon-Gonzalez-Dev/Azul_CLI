@@ -1,15 +1,19 @@
 """Command handlers for @ commands."""
 
+import logging
 from pathlib import Path
 from typing import Optional, Tuple
 
 from azul.command_parser import ParsedCommand
+
+logger = logging.getLogger(__name__)
 from azul.ollama_client import get_ollama_client
 from azul.session_manager import get_session_manager
 from azul.file_handler import get_file_handler
 from azul.context import get_context_manager
 from azul.editor import get_editor
 from azul.formatter import get_formatter
+from azul.config.manager import get_config_manager
 
 
 class CommandHandler:
@@ -402,7 +406,208 @@ Everything else is treated as a natural language prompt to the AI.
             # Set it globally
             get_rag_manager(project_root)
         
-        # Check if index exists and ask for confirmation
+        # Pre-flight check: Verify embedding model BEFORE showing warnings
+        # This prevents showing "index exists" warning when we can't even index
+        try:
+            import ollama
+            models_response = ollama.list()
+            
+            # Extract model names - handle different response formats
+            local_models = []
+            
+            # Debug: log the raw response structure
+            # logger.debug(f"Ollama response type: {type(models_response)}, content: {models_response}")
+            
+            # Try different ways to extract models - be very aggressive
+            models_list = []
+            
+            # Handle ListResponse object (has .models attribute) - CHECK THIS FIRST
+            if hasattr(models_response, 'models'):
+                try:
+                    # Access .models attribute directly
+                    models_attr = getattr(models_response, 'models')
+                    
+                    # Handle different types .models might be
+                    if isinstance(models_attr, list):
+                        models_list = models_attr
+                    elif isinstance(models_attr, dict):
+                        # If it's a dict, try to extract the list
+                        if 'models' in models_attr:
+                            models_list = models_attr['models']
+                        elif 'data' in models_attr:
+                            models_list = models_attr['data']
+                        else:
+                            # Try to find any list value in the dict
+                            for v in models_attr.values():
+                                if isinstance(v, list):
+                                    models_list = v
+                                    break
+                    elif hasattr(models_attr, '__iter__') and not isinstance(models_attr, (str, bytes)):
+                        # If it's iterable (but not a list), convert to list
+                        models_list = list(models_attr)
+                    else:
+                        # Try to get it as a property/descriptor
+                        models_list = models_attr
+                except Exception as e:
+                    # If accessing .models fails, try alternative methods
+                    logger.debug(f"Error accessing .models: {e}")
+                    models_list = []
+            # Handle dict-like objects
+            elif isinstance(models_response, dict):
+                # Try "models" key first (most common)
+                if "models" in models_response:
+                    models_list = models_response["models"]
+                # Try other possible keys
+                elif "data" in models_response:
+                    models_list = models_response["data"]
+                # Try any key that contains a list
+                else:
+                    for key, value in models_response.items():
+                        if isinstance(value, list) and len(value) > 0:
+                            # Check if it looks like a list of models (has dicts with "name" or string)
+                            if isinstance(value[0], dict) and ("name" in value[0] or "model" in value[0]):
+                                models_list = value
+                                break
+                            elif isinstance(value[0], str):
+                                models_list = value
+                                break
+            # Handle list directly
+            elif isinstance(models_response, list):
+                models_list = models_response
+            # Try to access as attribute if it's an object
+            elif hasattr(models_response, '__dict__'):
+                # Try common attribute names
+                for attr in ['models', 'data', 'items']:
+                    if hasattr(models_response, attr):
+                        value = getattr(models_response, attr)
+                        if isinstance(value, list):
+                            models_list = value
+                            break
+            
+            # Extract model names from the list
+            # Debug: log models_list for troubleshooting
+            # logger.debug(f"models_list type: {type(models_list)}, length: {len(models_list) if hasattr(models_list, '__len__') else 'N/A'}")
+            
+            if models_list:
+                for m in models_list:
+                    if isinstance(m, dict):
+                        # Try multiple possible keys for model name
+                        name = (
+                            m.get("name") or 
+                            m.get("model") or 
+                            m.get("model_name") or
+                            m.get("id")  # Sometimes it's "id"
+                        )
+                        if name:
+                            name_str = str(name).strip()
+                            if name_str:
+                                # Store full name
+                                local_models.append(name_str)
+                                # Also add base name without tag for matching
+                                if ":" in name_str:
+                                    base_name = name_str.split(":")[0]
+                                    if base_name and base_name not in local_models:
+                                        local_models.append(base_name)
+                    elif isinstance(m, str):
+                        m_str = m.strip()
+                        if m_str:
+                            local_models.append(m_str)
+                            if ":" in m_str:
+                                base_name = m_str.split(":")[0]
+                                if base_name and base_name not in local_models:
+                                    local_models.append(base_name)
+            elif hasattr(models_response, 'models'):
+                # models_list is empty, but .models exists - try direct iteration
+                try:
+                    # Maybe .models is iterable directly
+                    for m in models_response.models:
+                        if isinstance(m, dict):
+                            name = m.get("name") or m.get("model") or m.get("model_name") or m.get("id")
+                            if name:
+                                name_str = str(name).strip()
+                                if name_str:
+                                    local_models.append(name_str)
+                                    if ":" in name_str:
+                                        base_name = name_str.split(":")[0]
+                                        if base_name and base_name not in local_models:
+                                            local_models.append(base_name)
+                        elif isinstance(m, str):
+                            m_str = m.strip()
+                            if m_str:
+                                local_models.append(m_str)
+                except (TypeError, AttributeError):
+                    pass
+            
+            # Get embedding model from config
+            config_manager = get_config_manager()
+            rag_config = config_manager.get("rag", {})
+            embedding_model = rag_config.get("embedding_model", "nomic-embed-text")
+            
+            # Check both exact match and base name match (without tag)
+            embedding_base = embedding_model.split(":")[0] if ":" in embedding_model else embedding_model
+            
+            # Also check if any model starts with the base name (more flexible matching)
+            model_found = False
+            for model_name in local_models:
+                model_str = str(model_name)
+                # Check exact match
+                if model_str == embedding_model or model_str == embedding_base:
+                    model_found = True
+                    break
+                # Check if model starts with base name (handles tags)
+                if model_str.startswith(embedding_base + ":") or model_str.startswith(embedding_model + ":"):
+                    model_found = True
+                    break
+                # Check if base name matches (reverse check)
+                if ":" in model_str and model_str.split(":")[0] == embedding_base:
+                    model_found = True
+                    break
+            
+            if not model_found:
+                # Show available models in error for debugging
+                available_str = ", ".join(local_models[:5]) if local_models else "none"
+                if len(local_models) > 5:
+                    available_str += f" ... ({len(local_models)} total)"
+                
+                # If we found no models, show raw response structure for debugging
+                debug_info = ""
+                if not local_models:
+                    debug_info = f"\nDebug: Ollama response type: {type(models_response).__name__}"
+                    if isinstance(models_response, dict):
+                        debug_info += f", keys: {list(models_response.keys())[:5]}"
+                    elif isinstance(models_response, list):
+                        debug_info += f", length: {len(models_response)}"
+                    elif hasattr(models_response, '__dict__'):
+                        debug_info += f", attributes: {list(models_response.__dict__.keys())[:5]}"
+                    elif hasattr(models_response, 'models'):
+                        try:
+                            models_attr = getattr(models_response, 'models')
+                            debug_info += f", models attr type: {type(models_attr).__name__}"
+                            if isinstance(models_attr, (list, tuple)):
+                                debug_info += f", models length: {len(models_attr)}"
+                                if len(models_attr) > 0:
+                                    first_item = models_attr[0]
+                                    debug_info += f", first item type: {type(first_item).__name__}"
+                                    if isinstance(first_item, dict):
+                                        debug_info += f", first item keys: {list(first_item.keys())[:5]}"
+                            elif isinstance(models_attr, dict):
+                                debug_info += f", models keys: {list(models_attr.keys())[:5]}"
+                            else:
+                                debug_info += f", models repr: {repr(models_attr)[:100]}"
+                            # Also show models_list state
+                            debug_info += f", models_list length: {len(models_list)}"
+                        except Exception as e:
+                            debug_info += f", error accessing models: {e}"
+                
+                error_msg = f"Embedding model '{embedding_model}' not found.\n"
+                error_msg += f"Available models: {available_str}{debug_info}\n"
+                error_msg += f"Please run: ollama pull {embedding_model}\n"
+                error_msg += "Indexing cannot proceed without the embedding model."
+                return False, error_msg
+        except Exception as e:
+            return False, f"Could not verify embedding model availability: {e}"
+        
+        # Check if index exists and ask for confirmation (only if we can proceed)
         if rag_manager.index_exists() and not clean:
             self.formatter.print_warning("Index already exists. Use @index --clean to rebuild from scratch.")
             # Still proceed with incremental update
@@ -412,12 +617,47 @@ Everything else is treated as a natural language prompt to the AI.
         try:
             metrics = rag_manager.index(clean=clean)
             
+            # Check if indexing failed (shouldn't happen after pre-flight check, but safety)
+            if metrics.get("error"):
+                return False, metrics.get("error")
+            
+            # Check if no chunks were created (possible failure)
+            chunks_created = metrics.get('chunks_created', 0)
+            if chunks_created == 0:
+                warning = metrics.get('warning', '')
+                if warning:
+                    self.formatter.print_warning(warning)
+                self.formatter.console.print("\n[bold yellow]Indexing completed with warnings[/bold yellow]")
+            else:
+                self.formatter.console.print("\n[bold green]Indexing complete![/bold green]")
+            
             # Display metrics
-            self.formatter.console.print("\n[bold green]Indexing complete![/bold green]")
             self.formatter.console.print(f"  Files indexed: {metrics.get('files_indexed', 0)}")
             self.formatter.console.print(f"  Chunks created: {metrics.get('chunks_created', 0)}")
             self.formatter.console.print(f"  Index size: {metrics.get('index_size_mb', 0):.2f} MB")
             self.formatter.console.print(f"  Time: {metrics.get('indexing_time', 0):.2f}s")
+            
+            # Show skipped/error files summary if any
+            skipped = metrics.get('skipped_files', [])
+            errors = metrics.get('error_files', [])
+            if skipped or errors:
+                total = len(skipped) + len(errors)
+                if total <= 10:  # Show details if few issues
+                    if skipped:
+                        self.formatter.console.print(f"\n  [yellow]Skipped files ({len(skipped)}):[/yellow]")
+                        for file_path, reason in skipped[:5]:
+                            self.formatter.console.print(f"    • {file_path}: {reason}")
+                        if len(skipped) > 5:
+                            self.formatter.console.print(f"    ... and {len(skipped) - 5} more")
+                    if errors:
+                        self.formatter.console.print(f"\n  [red]Errors ({len(errors)}):[/red]")
+                        for file_path, error in errors[:5]:
+                            self.formatter.console.print(f"    • {file_path}: {error}")
+                        if len(errors) > 5:
+                            self.formatter.console.print(f"    ... and {len(errors) - 5} more")
+                else:  # Too many, just show counts
+                    self.formatter.console.print(f"\n  [dim]Note: {total} files had issues (see logs for details)[/dim]")
+            
             self.formatter.console.print()
             
             return True, None

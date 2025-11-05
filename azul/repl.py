@@ -1,5 +1,6 @@
 """Interactive REPL for AZUL CLI."""
 
+import logging
 from typing import Optional, Tuple
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
@@ -15,6 +16,8 @@ from azul.formatter import get_formatter
 from azul.editor import get_editor
 from azul.file_monitor import get_file_monitor
 from azul.config.manager import get_config_manager
+
+logger = logging.getLogger(__name__)
 
 
 class REPL:
@@ -95,7 +98,8 @@ class REPL:
                             rel_path = file_path_obj
                         
                         self.rag_manager.update_index_on_file_change(str(rel_path))
-                        self.formatter.print_info("[INFO] Index updated to reflect recent changes")
+                        # Silent update - no console spam
+                        logger.info(f"Index updated for {rel_path}")
                     except Exception as e:
                         # Silently fail - don't interrupt user
                         pass
@@ -108,10 +112,11 @@ class REPL:
         """Check and display file change notifications."""
         notifications = self.file_monitor.get_notifications()
         if notifications:
-            for file_path in notifications[:3]:  # Limit to 3 notifications
-                self.formatter.print_info(
-                    f"File modified: {file_path}. Say 'review it' or '@read {file_path}' to see changes."
-                )
+            # Only show first notification, don't spam
+            if len(notifications) == 1:
+                self.formatter.console.print(f"\n[dim]File modified: {notifications[0]}[/dim]")
+            else:
+                self.formatter.console.print(f"\n[dim]{len(notifications)} files modified[/dim]")
     
     def _handle_command(self, parsed: ParsedCommand) -> bool:
         """
@@ -229,21 +234,25 @@ class REPL:
         file_info = self.editor.extract_file_content(response)
         if file_info:
             file_path, file_content = file_info
-            self.formatter.print_info(f"\nDetected file creation: {file_path}")
+            self.formatter.console.print(f"\n[dim]Creating file: {file_path}[/dim]")
             success, error = self.editor.create_file(file_path, file_content)
             if not success and error:
-                self.formatter.print_warning(f"Could not create file: {error}")
+                self.formatter.print_error(f"Could not create file: {error}")
+            else:
+                self.formatter.print_success(f"Created {file_path}")
             return  # Don't check for other operations if we created a file
-        
+
         # 2. Check for file deletion
         delete_file = self.editor.extract_delete_file(response)
         if delete_file:
-            self.formatter.print_info(f"\nDetected file deletion: {delete_file}")
+            self.formatter.console.print(f"\n[dim]Deleting file: {delete_file}[/dim]")
             success, error = self.editor.delete_file(delete_file)
             if not success and error:
-                self.formatter.print_warning(f"Could not delete file: {error}")
+                self.formatter.print_error(f"Could not delete file: {error}")
+            else:
+                self.formatter.print_success(f"Deleted {delete_file}")
             return  # Don't check for edits if we deleted a file
-        
+
         # 3. Check if response contains diff (for natural language edits)
         if "```diff" in response or "--- a/" in response:
             # Extract file references from context
@@ -251,10 +260,12 @@ class REPL:
             if referenced_files:
                 # Try to apply edit to first referenced file
                 file_path = referenced_files[0]
-                self.formatter.print_info(f"\nDetected file edit for: {file_path}")
+                self.formatter.console.print(f"\n[dim]Editing file: {file_path}[/dim]")
                 success, error = self.editor.edit_file(file_path, response)
                 if not success and error:
-                    self.formatter.print_warning(f"Could not apply edit: {error}")
+                    self.formatter.print_error(f"Could not apply edit: {error}")
+                else:
+                    self.formatter.print_success(f"Edited {file_path}")
     
     def change_directory(self, target_dir: str) -> Tuple[bool, Optional[str]]:
         """

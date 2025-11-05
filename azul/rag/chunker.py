@@ -33,24 +33,42 @@ class Chunker:
     
     def _load_parsers(self) -> None:
         """Load Tree-sitter parsers for supported languages."""
-        # Python is already available via tree-sitter-python
+        # Try to load Python parser from tree-sitter-python package
         try:
             from tree_sitter_python import language as python_language
+            # tree-sitter-python provides a Language object directly
             self._parsers["python"] = python_language
+            logger.info("Loaded Tree-sitter Python parser")
         except ImportError:
-            pass
-        
-        # Add more languages as needed
-        # For now, we'll use Python parser and fallback for others
+            logger.debug("tree-sitter-python not available, AST chunking disabled for Python")
+            self._parsers["python"] = None
+        except Exception as e:
+            logger.warning(f"Error loading Python parser: {e}")
+            self._parsers["python"] = None
     
     def _get_parser(self, language: str) -> Optional[Parser]:
         """Get parser for a language."""
-        if language not in self._parsers:
+        if language not in self._parsers or self._parsers[language] is None:
             return None
         
-        parser = Parser()
-        parser.set_language(self._parsers[language])
-        return parser
+        try:
+            parser = Parser()
+            # Set language - this should work with tree-sitter-python's Language object
+            parser.set_language(self._parsers[language])
+            return parser
+        except AttributeError:
+            # If set_language doesn't exist, try alternative API
+            logger.debug(f"Parser.set_language not available, trying alternative API for {language}")
+            try:
+                # Some versions use a different API
+                parser = Parser(self._parsers[language])
+                return parser
+            except Exception as e:
+                logger.warning(f"Failed to create parser for {language}: {e}")
+                return None
+        except Exception as e:
+            logger.warning(f"Error creating parser for {language}: {e}")
+            return None
     
     def _detect_language(self, file_path: Path) -> str:
         """Detect language from file extension."""

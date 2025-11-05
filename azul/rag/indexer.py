@@ -138,7 +138,6 @@ class Indexer:
             Maintains 1:1 correspondence with input texts
         """
         embeddings = []
-        model_error_shown = False
         
         for text in texts:
             # Validate text
@@ -158,16 +157,10 @@ class Indexer:
                     logger.warning("Empty embedding response")
                     embeddings.append(None)
             except Exception as e:
-                error_msg = str(e)
-                if "not found" in error_msg.lower():
-                    if not model_error_shown:
-                        self.formatter.print_error(f"Embedding model '{self.embedding_model}' not found.")
-                        self.formatter.print_info(f"Please run: ollama pull {self.embedding_model}")
-                        model_error_shown = True
-                    embeddings.append(None)
-                else:
-                    logger.warning(f"Error generating embedding: {e}")
-                    embeddings.append(None)
+                # Don't spam errors - pre-flight check should have caught model issues
+                # Only log to logger, not to user
+                logger.error(f"Error generating embedding (batch): {e}")
+                embeddings.append(None)
         
         return embeddings
     
@@ -184,6 +177,128 @@ class Indexer:
         start_time = time.time()
         metrics = MetricsCollector()
         
+        # PRE-FLIGHT CHECK: Verify embedding model is available BEFORE starting
+        try:
+            models_response = ollama.list()
+            
+            # Extract model names - handle different response formats
+            local_models = []
+            
+            # Try different ways to extract models
+            models_list = []
+            
+            # Handle ListResponse object (has .models attribute)
+            if hasattr(models_response, 'models'):
+                try:
+                    models_list = models_response.models
+                    # If models is a property that returns a dict with 'models' key, extract it
+                    if isinstance(models_list, dict) and 'models' in models_list:
+                        models_list = models_list['models']
+                except (AttributeError, TypeError):
+                    # Try dict conversion
+                    try:
+                        models_dict = dict(models_response) if hasattr(models_response, '__dict__') else {}
+                        if 'models' in models_dict:
+                            models_list = models_dict['models']
+                    except:
+                        pass
+            # Handle dict-like objects
+            elif isinstance(models_response, dict):
+                # Try "models" key first
+                if "models" in models_response:
+                    models_list = models_response["models"]
+                # Try other possible keys
+                elif "data" in models_response:
+                    models_list = models_response["data"]
+                # Maybe the dict itself is the model list wrapper
+                elif len(models_response) == 1 and isinstance(list(models_response.values())[0], list):
+                    models_list = list(models_response.values())[0]
+            # Handle list directly
+            elif isinstance(models_response, list):
+                models_list = models_response
+            # Try to access as attribute if it's an object
+            elif hasattr(models_response, '__dict__'):
+                # Try common attribute names
+                for attr in ['models', 'data', 'items']:
+                    if hasattr(models_response, attr):
+                        value = getattr(models_response, attr)
+                        if isinstance(value, list):
+                            models_list = value
+                            break
+            
+            # Extract model names from the list
+            for m in models_list:
+                if isinstance(m, dict):
+                    # Try multiple possible keys for model name
+                    name = (
+                        m.get("name") or 
+                        m.get("model") or 
+                        m.get("model_name") or
+                        m.get("id")  # Sometimes it's "id"
+                    )
+                    if name:
+                        name_str = str(name).strip()
+                        if name_str:
+                            # Store full name
+                            local_models.append(name_str)
+                            # Also add base name without tag for matching
+                            if ":" in name_str:
+                                base_name = name_str.split(":")[0]
+                                if base_name and base_name not in local_models:
+                                    local_models.append(base_name)
+                elif isinstance(m, str):
+                    m_str = m.strip()
+                    if m_str:
+                        local_models.append(m_str)
+                        if ":" in m_str:
+                            base_name = m_str.split(":")[0]
+                            if base_name and base_name not in local_models:
+                                local_models.append(base_name)
+            
+            # Check both exact match and base name match (without tag)
+            embedding_base = self.embedding_model.split(":")[0] if ":" in self.embedding_model else self.embedding_model
+            
+            # Also check if any model starts with the base name (more flexible matching)
+            model_found = False
+            for model_name in local_models:
+                model_str = str(model_name)
+                # Check exact match
+                if model_str == self.embedding_model or model_str == embedding_base:
+                    model_found = True
+                    break
+                # Check if model starts with base name (handles tags)
+                if model_str.startswith(embedding_base + ":") or model_str.startswith(self.embedding_model + ":"):
+                    model_found = True
+                    break
+                # Check if base name matches (reverse check)
+                if ":" in model_str and model_str.split(":")[0] == embedding_base:
+                    model_found = True
+                    break
+            
+            if not model_found:
+                # Don't print error here - it's already handled in command handler
+                # Return error in metrics for handler to display
+                return {
+                    "indexing_time": 0.0,
+                    "files_indexed": 0,
+                    "files_list": [],
+                    "chunks_created": 0,
+                    "index_size_mb": 0.0,
+                    "peak_ram_mb": 0.0,
+                    "error": f"Embedding model '{self.embedding_model}' not found"
+                }
+        except Exception as e:
+            # Don't print error here - it's already handled in command handler
+            return {
+                "indexing_time": 0.0,
+                "files_indexed": 0,
+                "files_list": [],
+                "chunks_created": 0,
+                "index_size_mb": 0.0,
+                "peak_ram_mb": 0.0,
+                "error": str(e)
+            }
+        
         if clean:
             self.vector_db.clear()
         
@@ -199,6 +314,8 @@ class Indexer:
         
         files_indexed = []
         all_chunks = []
+        skipped_files = []  # Track skipped files with reasons for summary
+        error_files = []  # Track files with errors
         
         # Process files with progress bar
         with Progress(
@@ -206,6 +323,7 @@ class Indexer:
             TextColumn("[progress.description]{task.description}"),
             BarColumn(),
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TextColumn("[dim]{task.completed}/{task.total} files[/dim]"),
             transient=False,
         ) as progress:
             file_task = progress.add_task("Processing files...", total=len(files))
@@ -220,14 +338,22 @@ class Indexer:
                         content, error = self.file_handler.read_file(str(file_path))
                         if error:
                             logger.warning(f"Skipping {file_path}: {error}")
-                            self.formatter.print_warning(f"Skipping {file_path}: {error}")
+                            try:
+                                rel_path = file_path.relative_to(self.project_root)
+                                skipped_files.append((str(rel_path), error))
+                            except:
+                                skipped_files.append((str(file_path), error))
                             progress.update(file_task, advance=1)
                             continue
                         
                         # Explicitly check for None or empty content
                         if content is None or not isinstance(content, str) or not content.strip():
                             logger.warning(f"Skipping empty or unreadable file: {file_path}")
-                            self.formatter.print_warning(f"Skipping empty or unreadable file: {file_path}")
+                            try:
+                                rel_path = file_path.relative_to(self.project_root)
+                                skipped_files.append((str(rel_path), "Empty or unreadable file"))
+                            except:
+                                skipped_files.append((str(file_path), "Empty or unreadable file"))
                             progress.update(file_task, advance=1)
                             continue
                         
@@ -279,18 +405,30 @@ class Indexer:
                     
                     except UnicodeDecodeError as e:
                         logger.error(f"Unicode decode error for {file_path}: {e}", exc_info=True)
-                        self.formatter.print_warning(f"Skipping file with encoding issues: {file_path}")
+                        try:
+                            rel_path = file_path.relative_to(self.project_root)
+                            error_files.append((str(rel_path), f"Encoding error: {e}"))
+                        except:
+                            error_files.append((str(file_path), f"Encoding error: {e}"))
                         progress.update(file_task, advance=1)
                         continue
                     except IOError as e:
                         logger.error(f"IO error reading {file_path}: {e}", exc_info=True)
-                        self.formatter.print_warning(f"Skipping file due to IO error: {file_path}")
+                        try:
+                            rel_path = file_path.relative_to(self.project_root)
+                            error_files.append((str(rel_path), f"IO error: {e}"))
+                        except:
+                            error_files.append((str(file_path), f"IO error: {e}"))
                         progress.update(file_task, advance=1)
                         continue
                 
                 except Exception as e:
                     logger.error(f"Failed to process file {file_path}: {e}", exc_info=True)
-                    self.formatter.print_warning(f"Error processing {file_path}: {e}")
+                    try:
+                        rel_path = file_path.relative_to(self.project_root)
+                        error_files.append((str(rel_path), f"Processing error: {e}"))
+                    except:
+                        error_files.append((str(file_path), f"Processing error: {e}"))
                     progress.update(file_task, advance=1)
                     continue
             
@@ -324,9 +462,10 @@ class Indexer:
                 progress.update(embed_task, advance=len(batch))
             
             # Store in vector DB - use only chunks that have embeddings
+            chunks_stored = 0  # Initialize before storage
             if valid_chunks_for_storage and embeddings:
                 if len(valid_chunks_for_storage) != len(embeddings):
-                    self.formatter.print_warning(f"Storing {len(embeddings)} chunks (some may have been skipped due to embedding errors)")
+                    logger.warning(f"Chunk/embedding count mismatch: {len(valid_chunks_for_storage)} chunks, {len(embeddings)} embeddings")
                     # Ensure matching counts
                     min_len = min(len(valid_chunks_for_storage), len(embeddings))
                     valid_chunks_for_storage = valid_chunks_for_storage[:min_len]
@@ -336,18 +475,35 @@ class Indexer:
                 self.vector_db.add_chunks(valid_chunks_for_storage, embeddings)
                 progress.update(store_task, completed=len(valid_chunks_for_storage))
                 
-                # Update all_chunks count for metrics
-                all_chunks = valid_chunks_for_storage
+                # Track chunks stored for metrics
+                chunks_stored = len(valid_chunks_for_storage)
         
         indexing_time = time.time() - start_time
         
-        # Get metrics
+        # Get metrics - chunks_stored is set during storage phase
+        final_chunks_stored = chunks_stored if 'chunks_stored' in locals() else 0
+        
         indexing_metrics = metrics.get_indexing_metrics(
             indexing_time,
             files_indexed,
-            len(all_chunks),
+            final_chunks_stored,  # Use actual stored chunks
             self.project_root / ".azul_index"
         )
+        
+        # Add summary information
+        indexing_metrics["skipped_files"] = skipped_files
+        indexing_metrics["error_files"] = error_files
+        
+        # Display summary if there were skipped/error files
+        if skipped_files or error_files:
+            total_issues = len(skipped_files) + len(error_files)
+            if total_issues > 0:
+                self.formatter.console.print(f"\n[dim]Skipped {len(skipped_files)} file(s), {len(error_files)} error(s)[/dim]")
+        
+        # Add warning if no chunks were stored
+        if final_chunks_stored == 0 and len(files) > 0:
+            indexing_metrics["warning"] = "No chunks were successfully indexed. Check logs for errors."
+            self.formatter.print_warning("⚠️  Warning: No chunks were successfully indexed. The index may be empty.")
         
         return indexing_metrics
     
