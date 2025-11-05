@@ -275,13 +275,12 @@ class DiffEditor:
         Returns:
             Tuple of (success, error_message)
         """
-        # Show preview
-        if show_preview:
-            self.formatter.print_info(f"New file: {file_path}")
-            self.formatter.print_code_block(file_content, self._detect_language(file_path))
-        
-        # Request permission
-        if not self.permissions.request_file_creation_permission(file_path, file_content if show_preview else None):
+        # Request permission (preview will be shown in permissions module)
+        if not self.permissions.request_file_creation_permission(
+            file_path, 
+            file_content if show_preview else None,
+            self._detect_language(file_path)
+        ):
             return False, "Permission denied"
         
         # Write file

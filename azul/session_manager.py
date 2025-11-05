@@ -68,9 +68,16 @@ class SessionManager:
             pass  # Silently fail - don't block
     
     def add_message(self, role: str, content: str) -> None:
-        """Add message - optimized for speed."""
+        """
+        Add message - optimized for speed.
+        Supports roles: 'user', 'assistant', 'tool'
+        """
         if self._history is None:
             self.load_history()
+        
+        # Validate role
+        if role not in ['user', 'assistant', 'tool']:
+            role = 'assistant'  # Default fallback
         
         self._history.append({'role': role, 'content': content})
         

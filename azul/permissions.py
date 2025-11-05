@@ -5,6 +5,7 @@ from typing import Optional, List, Tuple
 from dataclasses import dataclass
 
 from azul.config.manager import get_config_manager
+from azul.formatter import get_formatter
 
 
 @dataclass
@@ -24,6 +25,7 @@ class PermissionManager:
     def __init__(self):
         """Initialize permission manager."""
         self.config = get_config_manager()
+        self.formatter = get_formatter()
     
     def request_permission(
         self,
@@ -43,18 +45,15 @@ class PermissionManager:
             True if permission granted, False otherwise
         """
         if show_diff:
-            click.echo("\n" + "="*70)
-            click.echo("Proposed Changes:")
-            click.echo("="*70)
-            click.echo(show_diff)
-            click.echo("="*70 + "\n")
+            self.formatter.print_info("\nProposed Changes:")
+            self.formatter.print_diff(show_diff)
         
-        click.echo(f"{description}\n")
+        self.formatter.print_info(description)
         
         # Check if auto-approve is enabled
         auto_approve = self.config.get("permission_defaults", {}).get("auto_approve", False)
         if auto_approve:
-            click.echo("Auto-approve is enabled. Proceeding...")
+            self.formatter.print_info("Auto-approve is enabled. Proceeding...")
             return True
         
         return click.confirm(f"Do you want to {action}?", default=False)
@@ -83,7 +82,8 @@ class PermissionManager:
     def request_file_creation_permission(
         self,
         file_path: str,
-        preview: Optional[str] = None
+        preview: Optional[str] = None,
+        language: str = "text"
     ) -> bool:
         """
         Request permission to create a file.
@@ -91,16 +91,14 @@ class PermissionManager:
         Args:
             file_path: Path to file being created
             preview: Optional preview of file content
+            language: Programming language for syntax highlighting
             
         Returns:
             True if permission granted, False otherwise
         """
         if preview:
-            click.echo("\n" + "="*70)
-            click.echo("File Preview:")
-            click.echo("="*70)
-            click.echo(preview)
-            click.echo("="*70 + "\n")
+            self.formatter.print_info(f"\nNew file: {file_path}")
+            self.formatter.print_code_block(preview, language)
         
         return self.request_permission(
             action="create this file",
