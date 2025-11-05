@@ -82,7 +82,7 @@ Thumbs.db
 *.orig
 
 # User-specific files
-startup.txt
+
 
 # Node.js (if accidentally added)
 package-lock.json

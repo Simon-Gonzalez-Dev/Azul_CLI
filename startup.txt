@@ -1,0 +1,39 @@
+
+______________FOR SETTING UP PATH TO AZUL ON TERMINAL ON MAC__________
+
+
+
+echo 'export PATH="/Users/simongonzalez/Desktop/AZUL_CLI/Azul_CLI/venv/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+
+
+
+____________________________________________________
+
+--------------AFTER CLONING----------------------
+
+
+# AZUL CLI Setup Commands
+# Run these commands after cloning the repository
+
+# 1. Create Python 3.12 virtual environment
+python3.12 -m venv venv
+
+# 2. Activate the virtual environment
+# On macOS/Linux:
+source venv/bin/activate
+# On Windows:
+# venv\Scripts\activate
+
+# 3. Upgrade pip to latest version (avoids dependency issues)
+pip install --upgrade pip
+
+# 4. Install the package in editable mode with dependencies
+pip install -e .
+
+# 5. Verify installation
+azul --help
+
+# 6. Run the CLI tool
+azul
+
