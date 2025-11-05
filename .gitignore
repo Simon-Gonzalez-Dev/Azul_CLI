@@ -37,10 +37,12 @@ pyvenv.cfg
 .DS_Store
 
 # Model files (large binary files)
-azul/models/*.gguf
-azul/models/*.bin
 *.gguf
 *.bin
+
+# Models folder - ignore contents but keep folder structure
+azul/models/*
+!azul/models/.gitkeep
 
 # Session data
 .azul_sessions/
