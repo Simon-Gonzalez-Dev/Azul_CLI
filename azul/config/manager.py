@@ -10,7 +10,7 @@ class ConfigManager:
     """Manages JSON configuration file for AZUL CLI."""
     
     DEFAULT_CONFIG = {
-        "model": "qwen2.5-coder:14b",
+        "model_path": None,  # Path to .gguf model file
         "temperature": 0.7,
         "max_history_messages": 20,
         "max_file_size_mb": 10,
@@ -20,21 +20,7 @@ class ConfigManager:
         },
         "context_window_size": 4096,
         "enable_file_monitoring": True,
-        "enable_cherry_picking": False,
-        "rag": {
-            "enabled_by_default": True,
-            "embedding_model": "nomic-embed-text",
-            "top_k_chunks": 5,
-            "chunk_max_tokens": 512,
-            "chunk_overlap_lines": 2,
-            "embedding_batch_size": 10,
-            "auto_index_on_start": True,
-            "auto_reindex_on_change": True,
-            "reindex_quiet_period": 5
-        },
-        "stats": {
-            "show_by_default": True
-        }
+        "enable_cherry_picking": False
     }
     
     def __init__(self):

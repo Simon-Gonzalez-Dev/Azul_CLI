@@ -9,13 +9,13 @@ from azul.env_checker import validate_environment
 
 @click.command()
 @click.argument('file', required=False, type=click.Path(exists=True))
-@click.option('--model', '-m', help='Ollama model to use')
+@click.option('--model', '-m', help='Path to .gguf model file')
 @click.option('--project-root', '-p', type=click.Path(), help='Project root directory')
 def main(file, model, project_root):
     """AZUL CLI - A Claude-like coding assistant with local LLMs."""
     
-    # Validate environment silently - don't show warnings if Ollama is connected
-    chat_available, rag_available = validate_environment()
+    # Validate environment silently
+    chat_available, _ = validate_environment()
     
     # Determine project root
     if project_root:
@@ -31,17 +31,11 @@ def main(file, model, project_root):
     
     # Set model if provided
     if model:
-        from azul.ollama_client import get_ollama_client
-        ollama = get_ollama_client()
-        ollama.set_model(model)
+        from azul.llama_client import get_llama_client
+        llama = get_llama_client()
+        llama.set_model_path(model)
     
-    # Disable RAG if embedding model not available
-    if not rag_available:
-        from azul.config.manager import get_config_manager
-        config = get_config_manager()
-        config.set("rag", {**config.get("rag", {}), "enabled_by_default": False})
-    
-    # If file provided, add it to context and start conversation
+    # If file provided, display it and start conversation
     if file:
         from azul.file_handler import get_file_handler
         from azul.formatter import get_formatter
@@ -54,7 +48,7 @@ def main(file, model, project_root):
             formatter.print_error(error)
             return
         
-        # Start REPL with file context
+        # Start REPL
         formatter.print_info(f"Loaded file: {file}")
         formatter.print_code_block(content, "text")
         formatter.console.print("\n")

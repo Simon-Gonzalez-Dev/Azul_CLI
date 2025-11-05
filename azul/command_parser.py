@@ -17,7 +17,7 @@ class CommandParser:
     """Parses @ commands from user input."""
     
     COMMANDS = {
-        'model': r'@model\s+(.+)',
+        'model': r'@model(?:\s+(.+))?',
         'edit': r'@edit\s+(\S+)\s+(.+)',
         'create': r'@create\s+(\S+)\s+(.+)',
         'delete': r'@delete\s+(\S+)',
@@ -27,10 +27,6 @@ class CommandParser:
         'cd': r'@cd\s+(.+)',
         'clear': r'@clear',
         'reset': r'@reset',
-        'index': r'@index(?:\s+(--clean))?',
-        'rag': r'@rag(?:\s+(on|off))?',
-        'stats': r'@stats(?:\s+(on|off))?',
-        'context': r'@context',
         'help': r'@help',
         'exit': r'@exit',
         'quit': r'@quit',

@@ -1,14 +1,15 @@
 """Environment checker for validating required models and dependencies."""
 
-import ollama
 from typing import Tuple, Optional
+import os
+from pathlib import Path
 from azul.config.manager import get_config_manager
 from azul.formatter import get_formatter
 
 
 def check_models(config) -> Tuple[bool, bool]:
     """
-    Check if required models are available.
+    Check if required model file is available.
     
     Args:
         config: Configuration dict
@@ -17,40 +18,42 @@ def check_models(config) -> Tuple[bool, bool]:
         Tuple of (chat_model_available, rag_available)
     """
     try:
-        # Get list of available models
-        models_response = ollama.list()
+        # Check if llama-cpp-python is available
+        try:
+            import llama_cpp
+            llama_available = True
+        except ImportError:
+            llama_available = False
         
-        # Handle different response structures
-        local_models = []
-        if isinstance(models_response, dict):
-            models_list = models_response.get("models", [])
-        elif isinstance(models_response, list):
-            models_list = models_response
-        else:
-            models_list = []
+        if not llama_available:
+            return False, False
         
-        # Extract model names safely
-        for m in models_list:
-            if isinstance(m, dict):
-                model_name = m.get("name") or m.get("model")
-                if model_name:
-                    local_models.append(model_name)
-            elif isinstance(m, str):
-                local_models.append(m)
+        # Check if model file exists
+        model_path = config.get("model_path", None)
+        if model_path and os.path.exists(model_path):
+            return True, False
         
-        # Check chat model - if not found, still allow continuation
-        chat_model = config.get("model", "qwen2.5-coder:14b")
-        chat_available = chat_model in local_models if local_models else True  # Allow if can't check
+        # Check for default model name - prioritize azul/models/ folder
+        default_model = "qwen2.5-coder-7b-instruct-q4_k_m.gguf"
+        # Get azul package directory
+        import azul
+        from pathlib import Path
+        azul_package_dir = Path(azul.__file__).parent
         
-        # Check embedding model for RAG
-        rag_enabled = config.get("rag", {}).get("enabled_by_default", True)
-        rag_available = False
+        # Try common locations (azul/models/ first)
+        possible_paths = [
+            str(azul_package_dir / "models" / default_model),  # azul/models/ first
+            os.path.join(os.path.expanduser("~"), "models", default_model),  # ~/models/ second
+            os.path.join(os.path.expanduser("~"), default_model),  # Home directory
+            default_model,  # Current directory last
+        ]
         
-        if rag_enabled and local_models:
-            embedding_model = config.get("rag", {}).get("embedding_model", "nomic-embed-text")
-            rag_available = embedding_model in local_models
+        for path in possible_paths:
+            if os.path.exists(path):
+                return True, False
         
-        return chat_available, rag_available
+        # Model not found but llama-cpp available - allow continuation
+        return True, False
         
     except Exception:
         # Silently fail - allow app to start, models will be checked when used

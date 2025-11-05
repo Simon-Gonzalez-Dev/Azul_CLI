@@ -34,13 +34,13 @@ class Formatter:
         lines = diff_content.split('\n')
         for line in lines:
             if line.startswith('+++') or line.startswith('---'):
-                self.console.print(f"[cyan]{line}[/cyan]")
+                self.console.print(f"[bold blue]{line}[/bold blue]")
             elif line.startswith('@@'):
-                self.console.print(f"[blue]{line}[/blue]")
+                self.console.print(f"[bold blue]{line}[/bold blue]")
             elif line.startswith('+'):
-                self.console.print(f"[green]{line}[/green]")
+                self.console.print(f"[bold blue]{line}[/bold blue]")
             elif line.startswith('-'):
-                self.console.print(f"[red]{line}[/red]")
+                self.console.print(f"[bold blue]{line}[/bold blue]")
             else:
                 self.console.print(line)
     
