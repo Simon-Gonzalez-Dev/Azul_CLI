@@ -103,8 +103,8 @@ class CommandHandler:
         instruction = args[1]
         
         # Find the actual file (searches recursively)
-        actual_path = self.file_handler.find_file(file_path)
-        if actual_path is None:
+        actual_path = self.file_handler.find_path(file_path)
+        if actual_path is None or not actual_path.is_file():
             return False, f"File not found: {file_path} (searched in project directory)"
         
         # Use the found path
@@ -168,8 +168,8 @@ class CommandHandler:
         file_path = args[0]
         
         # Find the actual file (searches recursively)
-        actual_path = self.file_handler.find_file(file_path)
-        if actual_path:
+        actual_path = self.file_handler.find_path(file_path)
+        if actual_path and actual_path.is_file():
             # Show the relative path if found
             rel_path = actual_path.relative_to(Path.cwd()) if actual_path.is_relative_to(Path.cwd()) else actual_path
             self.formatter.print_info(f"Found: {rel_path}")
@@ -348,9 +348,9 @@ class CommandHandler:
         file_path = args[0]
         
         # Find the actual file (searches recursively)
-        actual_path = self.file_handler.find_file(file_path)
+        actual_path = self.file_handler.find_path(file_path)
         if actual_path:
-            # Use the found path
+            # Use the found path (can be file or directory)
             file_path = str(actual_path.relative_to(Path.cwd())) if actual_path.is_relative_to(Path.cwd()) else str(actual_path)
         
         # Delete file

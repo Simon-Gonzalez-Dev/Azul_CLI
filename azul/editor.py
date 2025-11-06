@@ -1,6 +1,7 @@
 """Editor module for parsing and applying unified diffs."""
 
 import re
+import shutil
 from pathlib import Path
 from typing import Optional, List, Tuple
 from difflib import SequenceMatcher
@@ -205,8 +206,8 @@ class DiffEditor:
             return False, "Permission denied"
         
         # Find the actual file path (searches recursively)
-        actual_file_path = self.file_handler.find_file(file_path)
-        if actual_file_path is None:
+        actual_file_path = self.file_handler.find_path(file_path)
+        if actual_file_path is None or not actual_file_path.is_file():
             return False, f"File not found: {file_path}"
         
         # Apply diff
@@ -239,25 +240,6 @@ class DiffEditor:
         
         return None
     
-    def extract_delete_file(self, content: str) -> Optional[str]:
-        """
-        Extract file path from delete markdown code block.
-        
-        Args:
-            content: Markdown content that may contain delete instruction
-            
-        Returns:
-            File path to delete or None if not found
-        """
-        # Pattern to match delete code blocks: ```delete:filename
-        pattern = r'```delete:([^\n]+)```'
-        match = re.search(pattern, content, re.DOTALL)
-        
-        if match:
-            return match.group(1).strip()
-        
-        return None
-    
     def create_file(
         self,
         file_path: str,
@@ -265,25 +247,22 @@ class DiffEditor:
         show_preview: bool = True
     ) -> Tuple[bool, Optional[str]]:
         """
-        Create a new file with permission.
+        Create a new file (implicit permission - no confirmation required).
         
         Args:
             file_path: Path to file to create
             file_content: Content to write to file
-            show_preview: Whether to show file preview
+            show_preview: Whether to show file preview (for informational purposes)
             
         Returns:
             Tuple of (success, error_message)
         """
-        # Request permission (preview will be shown in permissions module)
-        if not self.permissions.request_file_creation_permission(
-            file_path, 
-            file_content if show_preview else None,
-            self._detect_language(file_path)
-        ):
-            return False, "Permission denied"
+        # Show preview if requested (informational only, not for permission)
+        if show_preview:
+            self.formatter.print_info(f"\nCreating file: {file_path}")
+            self.formatter.print_code_block(file_content, self._detect_language(file_path))
         
-        # Write file
+        # Write file (no permission request - implicit for create operations)
         error = self.file_handler.write_file(file_path, file_content)
         if error:
             return False, error
@@ -306,10 +285,24 @@ class DiffEditor:
         Returns:
             Tuple of (success, error_message)
         """
+        # Validate path - prevent dangerous operations
+        if not file_path or file_path.strip() == "/" or file_path.strip() == ".":
+            return False, f"Cannot delete root path or current directory: {file_path}"
+        
+        # Check if path is within sandbox
+        safe_path = self.file_handler.sandbox.get_safe_path(file_path)
+        if safe_path is None:
+            return False, f"Path is outside the project directory: {file_path}"
+        
         # Find the actual path (file or directory)
         actual_path = self.file_handler.find_path(file_path)
         if actual_path is None:
             return False, f"File or directory not found: {file_path}"
+        
+        # Additional safety check: ensure we're not deleting the project root itself
+        project_root = self.file_handler.sandbox.project_root
+        if actual_path.resolve() == project_root.resolve():
+            return False, f"Cannot delete the project root directory: {file_path}"
         
         # Determine if it's a file or directory
         is_directory = actual_path.is_dir()

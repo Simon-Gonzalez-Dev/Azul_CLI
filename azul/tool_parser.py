@@ -48,7 +48,8 @@ def detect_tool_call(buffer: str) -> Optional[str]:
 
 def extract_tool_call(content: str) -> Optional[ToolCall]:
     """
-    Extract a complete tool call from content.
+    Extract the FIRST complete tool call from content.
+    Enforces "one action at a time" rule - only the first tool call is extracted.
     
     Args:
         content: Text containing tool call in <tool_code> tags
@@ -58,11 +59,18 @@ def extract_tool_call(content: str) -> Optional[ToolCall]:
     """
     # Pattern to match tool_code tags (case-insensitive)
     pattern = r'<tool_code>(.*?)</tool_code>'
-    match = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
+    matches = list(re.finditer(pattern, content, re.IGNORECASE | re.DOTALL))
     
-    if not match:
+    if not matches:
         return None
     
+    # Enforce one action at a time - only extract the FIRST tool call
+    if len(matches) > 1:
+        # Log warning that AI violated the rule (but don't fail)
+        import logging
+        logging.warning(f"AI violated 'one action at a time' rule: found {len(matches)} tool calls, using only the first")
+    
+    match = matches[0]  # Use only the first match
     tool_code = match.group(1).strip()
     raw_code = match.group(0)  # Full tag including <tool_code>...</tool_code>
     

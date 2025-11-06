@@ -69,7 +69,10 @@ class FileHandler:
             Tuple of (content, error_message). content is None if error occurred.
         """
         # Try to find the file (searches recursively if needed)
-        safe_path = self.find_file(file_path)
+        safe_path = self.find_path(file_path)
+        # Ensure it's a file, not a directory
+        if safe_path and not safe_path.is_file():
+            safe_path = None
         
         if safe_path is None:
             # Try direct path first
@@ -105,6 +108,7 @@ class FileHandler:
     def find_file(self, filename: str) -> Optional[Path]:
         """
         Search for a file by name in the project directory (recursively).
+        DEPRECATED: Use find_path() instead. This method is kept for backward compatibility.
         
         Args:
             filename: Name of the file to find (can include subdirectories)
@@ -112,33 +116,10 @@ class FileHandler:
         Returns:
             Path to the file if found, None otherwise
         """
-        # First try exact path match
-        safe_path = self.sandbox.get_safe_path(filename)
-        if safe_path and safe_path.exists() and safe_path.is_file():
-            return safe_path
-        
-        # If not found, search recursively
-        project_root = self.sandbox.project_root
-        filename_only = Path(filename).name
-        
-        # Search recursively for the file
-        for path in project_root.rglob(filename_only):
-            # Skip hidden directories and files
-            if any(part.startswith('.') for part in path.parts):
-                continue
-            
-            # Validate it's within sandbox
-            if self.sandbox.validate_path(path) and path.is_file():
-                return path
-        
-        # Also try searching with the full relative path
-        if '/' in filename or '\\' in filename:
-            # Try as relative path
-            potential_path = project_root / filename
-            safe_path = self.sandbox.get_safe_path(str(potential_path))
-            if safe_path and safe_path.exists() and safe_path.is_file():
-                return safe_path
-        
+        # Use find_path and ensure it's a file
+        found_path = self.find_path(filename)
+        if found_path and found_path.is_file():
+            return found_path
         return None
     
     def find_path(self, pathname: str) -> Optional[Path]:
@@ -217,8 +198,8 @@ class FileHandler:
     
     def file_exists(self, file_path: str) -> bool:
         """Check if a file exists and is accessible (searches recursively)."""
-        found_path = self.find_file(file_path)
-        if found_path:
+        found_path = self.find_path(file_path)
+        if found_path and found_path.is_file():
             return True
         # Fallback to direct path check
         safe_path = self.sandbox.get_safe_path(file_path)
