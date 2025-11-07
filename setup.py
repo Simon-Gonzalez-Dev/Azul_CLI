@@ -1,46 +1,51 @@
-"""Setup script for AZUL CLI."""
+#!/usr/bin/env python3
+"""Setup script for AZUL CLI package."""
 
 from setuptools import setup, find_packages
+from pathlib import Path
 
-with open("README.md", "r", encoding="utf-8") as fh:
-    long_description = fh.read()
+# Read README if it exists
+readme_file = Path(__file__).parent / "README.md"
+long_description = readme_file.read_text() if readme_file.exists() else ""
 
 setup(
-    name="azul-cli",
+    name="azul",
     version="0.1.0",
-    author="AZUL CLI",
-    description="A Claude-like coding assistant with local LLMs via llama.cpp",
+    description="AZUL - Local Agentic AI Coding Assistant CLI",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/azul-cli",
+    author="AZUL Contributors",
+    license="MIT",
+    python_requires=">=3.12",
     packages=find_packages(),
-    classifiers=[
-        "Development Status :: 3 - Alpha",
-        "Intended Audience :: Developers",
-        "Topic :: Software Development :: Libraries :: Python Modules",
-        "License :: OSI Approved :: MIT License",
-        "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.10",
-        "Programming Language :: Python :: 3.11",
-        "Programming Language :: Python :: 3.12",
-    ],
-    python_requires=">=3.10",
     install_requires=[
-        "click>=8.0.0",
-        "prompt-toolkit>=3.0.0",
         "llama-cpp-python>=0.2.0",
+        "langchain>=0.1.0",
+        "langchain-community>=0.0.20",
+        "langgraph>=1.0.0",
+        "textual>=0.45.0",
         "rich>=13.0.0",
-        "tree-sitter>=0.20.0",
-        "tree-sitter-python>=0.20.0",
-        "watchdog>=3.0.0",
-        "tiktoken>=0.5.0",
-        "psutil>=5.9.0",
-        "gitignore-parser>=0.1.0",
+        "pexpect>=4.8.0",
     ],
+    extras_require={
+        "metal": ["llama-cpp-python[metal]>=0.2.0"],
+        "cuda": ["llama-cpp-python[cuda]>=0.2.0"],
+    },
     entry_points={
         "console_scripts": [
             "azul=azul.cli:main",
         ],
     },
+    include_package_data=True,
+    package_data={
+        "azul": ["models/*.gguf"],
+    },
+    classifiers=[
+        "Development Status :: 3 - Alpha",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.12",
+    ],
 )
 

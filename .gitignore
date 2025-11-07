@@ -26,7 +26,6 @@ venv/
 env/
 ENV/
 .venv
-pyvenv.cfg
 
 # IDE
 .vscode/
@@ -36,57 +35,28 @@ pyvenv.cfg
 *~
 .DS_Store
 
-# Model files (large binary files)
+# AZUL specific
 azul/models/*.gguf
 azul/models/*.bin
-*.gguf
-*.bin
-
-# Session data
-.azul_sessions/
+~/.azul/
 *.session
-
-# Config files (user-specific)
-config.json
-.azul_config.json
-
-# Logs
-*.log
-logs/
 
 # Testing
 .pytest_cache/
 .coverage
 htmlcov/
 .tox/
-.mypy_cache/
-.dmypy.json
-dmypy.json
 
 # Jupyter
-.ipynb_checkpoints
+.ipynb_checkpoints/
 
-# Environment
-.env
-.env.local
-*.local
+# Model files (large)
+*.gguf
+*.bin
+*.safetensors
 
-# OS
-.DS_Store
-Thumbs.db
+# Session data
+sessions/
+*.json
+!package.json
 
-# Temporary files
-*.tmp
-*.temp
-*.bak
-*.orig
-
-# User-specific files
-startup.txt
-
-# Node.js (if accidentally added)
-package-lock.json
-node_modules/
-
-# Python version management
-.python-version

@@ -1,42 +1,45 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "azul-cli"
+name = "azul"
 version = "0.1.0"
-description = "A Claude-like coding assistant with local LLMs via llama.cpp"
+description = "AZUL - Local Agentic AI Coding Assistant CLI"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
+license = {text = "MIT"}
 authors = [
-    {name = "AZUL CLI"}
+    {name = "AZUL Contributors"}
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "Topic :: Software Development :: Libraries :: Python Modules",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
+
 dependencies = [
-    "click>=8.0.0",
-    "prompt-toolkit>=3.0.0",
     "llama-cpp-python>=0.2.0",
+    "langchain>=0.1.0",
+    "langchain-community>=0.0.20",
+    "langgraph>=1.0.0",
+    "textual>=0.45.0",
     "rich>=13.0.0",
-    "tree-sitter>=0.20.0",
-    "tree-sitter-python>=0.20.0",
-    "watchdog>=3.0.0",
-    "tiktoken>=0.5.0",
-    "psutil>=5.9.0",
-    "gitignore-parser>=0.1.0",
+    "pexpect>=4.8.0",
 ]
+
+[project.optional-dependencies]
+metal = ["llama-cpp-python[metal]>=0.2.0"]
+cuda = ["llama-cpp-python[cuda]>=0.2.0"]
 
 [project.scripts]
 azul = "azul.cli:main"
 
-[project.urls]
-Homepage = "https://github.com/yourusername/azul-cli"
+[tool.setuptools]
+packages = ["azul", "azul.config"]
+
+[tool.setuptools.package-data]
+azul = ["models/*.gguf"]
 

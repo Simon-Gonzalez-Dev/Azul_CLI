@@ -1,265 +1,143 @@
-# AZUL CLI
+# AZUL - Local Agentic AI Coding Assistant
 
-A Claude-like coding assistant powered by local LLMs via Ollama. AZUL provides an interactive command-line interface for code editing, explanations, documentation, and more - all running locally on your machine.
+AZUL is a fully agentic coding assistant that operates entirely on your local machine. It uses llama.cpp via llama-cpp-python to run the qwen2.5-coder-7b-instruct-q4_k_m.gguf model locally, orchestrated through LangChain for tool-calling, presented via a Textual TUI, and executing file operations transparently through nano via pexpect.
 
 ## Features
 
-- **Interactive REPL**: Natural language conversation with your AI assistant
-- **File Editing**: Safe, permission-based file editing with unified diff support
-- **Code Awareness**: Intelligent context injection using Tree-sitter for efficient code parsing
-- **Session Management**: Directory-based conversation history
-- **Real-time Streaming**: Token-by-token response streaming for immediate feedback
-- **Sandboxed Environment**: Secure file operations restricted to your project directory
-
-## Requirements
-
-### Hardware Recommendations
-
-**⚠️ GPU Acceleration is Strongly Recommended**
-
-AZUL performs significantly better with GPU acceleration. The difference between CPU and GPU inference can be dramatic:
-
-- **CPU**: Slower responses, higher latency
-- **GPU**: Fast, responsive, real-time experience
-
-For best results:
-- Use a GPU with at least 8GB VRAM for the default model (qwen2.5-coder:14b)
-- NVIDIA GPUs work best with CUDA support
-- Apple Silicon (M1/M2/M3) also provides excellent performance
-
-### Software Requirements
-
-- Python 3.10 or higher
-- [Ollama](https://ollama.ai/) installed and running
-- The `qwen2.5-coder:14b` model (or another coding model) installed in Ollama
+- **Fully Local**: Runs entirely on your machine, no API calls
+- **Agentic Architecture**: Uses LangChain for Think-Plan-Act loops
+- **Transparent File Operations**: All edits performed through nano for full auditability
+- **Modern TUI**: Beautiful, responsive terminal interface built with Textual
+- **Two Operation Modes**: Agentic mode (default) and Simple mode (backward compatible)
 
 ## Installation
 
-1. **Install Ollama** (if not already installed):
-   ```bash
-   # macOS/Linux
-   curl -fsSL https://ollama.ai/install.sh | sh
-   
-   # Or download from https://ollama.ai
-   ```
+### Prerequisites
 
-2. **Pull the recommended model**:
-   ```bash
-   ollama pull qwen2.5-coder:14b
-   ```
+- Python 3.12 or higher
+- 4-8GB RAM (for 7B model)
+- GPU optional but recommended (Metal on Mac, CUDA on NVIDIA)
 
-3. **Install AZUL CLI**:
-   ```bash
-   # Clone the repository
-   git clone <repository-url>
-   cd Azul_CLI
-   
-   # Install in development mode
-   pip install -e .
-   ```
+### Install AZUL
 
-4. **Verify installation**:
-   ```bash
-   azul --help
-   ```
+```bash
+# Clone the repository
+git clone <repository-url>
+cd Azul_CLI
+
+# Install with pip
+pip install -e .
+
+# Or install with GPU support (Mac)
+pip install -e ".[metal]"
+
+# Or install with GPU support (NVIDIA)
+pip install -e ".[cuda]"
+```
+
+### Download Model
+
+Download the qwen2.5-coder-7b-instruct-q4_k_m.gguf model and place it in one of these locations:
+
+1. `azul/models/` (package directory)
+2. `~/.azul/models/` (user-specific)
+3. `~/models/` (common location)
+4. Current working directory
+
+Or specify the path with `--model-path` when running AZUL.
 
 ## Usage
 
-### Basic Usage
-
-Start AZUL in your project directory:
+### Agentic Mode (Default)
 
 ```bash
 azul
 ```
 
-This launches the interactive REPL where you can:
-- Ask questions about your code
-- Request file edits
-- Get explanations and documentation
-- Use `@` commands for specific actions
+This launches the interactive TUI. Simply type your request:
 
-### Starting with a File
+```
+User: Create a Python script that reads a CSV file and prints statistics
+Agent: [THINKING] → [PLAN] → [read_file] → [write_file_nano] → [RESPOND]
+```
+
+### Simple Mode
 
 ```bash
-azul path/to/file.py
+azul --simple
 ```
 
-This loads the file into context and starts a conversation about it.
+For quick tasks without the full agentic interface.
 
-### @ Commands
-
-All commands in AZUL use the `@` prefix. Everything else is treated as a natural language prompt.
-
-- `@model [name]` - Change Ollama model or show current model
-- `@edit <file> <instruction>` - Edit a file with a specific instruction
-- `@read <file>` - Read and display a file
-- `@clear` - Clear conversation history
-- `@help` - Show available commands
-- `@exit` / `@quit` - Exit AZUL
-
-### Examples
-
-#### Natural Language Prompts
+### Command Line Options
 
 ```bash
-azul> explain the main function in app.py
-azul> add error handling to the calculate function
-azul> document the User class
-azul> what does this code do?
+azul --help              # Show help
+azul --model-path PATH   # Specify model file path
+azul --simple            # Use simple mode
 ```
-
-#### Using @ Commands
-
-```bash
-azul> @read src/main.py
-azul> @edit src/main.py add type hints to all functions
-azul> @model llama3.2
-azul> @clear
-```
-
-#### File Editing Flow
-
-1. Request an edit (via `@edit` or natural language):
-   ```
-   azul> @edit utils.py add docstrings to all functions
-   ```
-
-2. AZUL shows a color-coded diff preview:
-   ```
-   --- a/utils.py
-   +++ b/utils.py
-   @@ -5,6 +5,10 @@
-   +"""
-   +Utility functions for the application.
-   +"""
-   def calculate_total(items):
-   +    """
-   +    Calculate the total of a list of items.
-   +    """
-       return sum(items)
-   ```
-
-3. Confirm the changes:
-   ```
-   Apply these changes? (y/n): y
-   ```
-
-4. AZUL applies the changes.
-
-## Configuration
-
-AZUL stores configuration in `~/.azul/config.json`. The default configuration includes:
-
-```json
-{
-  "model": "qwen2.5-coder:14b",
-  "temperature": 0.7,
-  "max_history_messages": 20,
-  "max_file_size_mb": 10,
-  "permission_defaults": {
-    "auto_approve": false,
-    "remember_choices": true
-  },
-  "context_window_size": 4096,
-  "enable_file_monitoring": true,
-  "enable_cherry_picking": false
-}
-```
-
-### Changing the Default Model
-
-You can change the default model in two ways:
-
-1. **Via @model command** (temporary, for current session):
-   ```
-   azul> @model llama3.2
-   ```
-
-2. **Edit config file** (permanent):
-   ```bash
-   # Edit ~/.azul/config.json
-   {
-     "model": "your-preferred-model"
-   }
-   ```
 
 ## Architecture
 
-### Components
+See [local_ai_process.md](local_ai_process.md) for complete architecture documentation.
 
-- **REPL**: Interactive shell with prompt-toolkit
-- **Ollama Client**: Streaming communication with Ollama API
-- **Session Manager**: Per-directory conversation history
-- **Context Manager**: Intelligent code parsing with Tree-sitter
-- **Editor**: Unified diff parsing and application
-- **Permission System**: Safe file operations with user confirmation
-- **Sandbox**: Path validation and security
-- **File Monitor**: Watchdog-based file change notifications
+## Development
 
-### Security
+### Setup Development Environment
 
-- **Sandboxed File Operations**: All file paths validated to prevent directory traversal
-- **Permission-Based**: Read-only by default, explicit permission required for edits
-- **Backup Creation**: Automatic backups before file modifications
+```bash
+# Install development dependencies
+pip install -e ".[dev]"
 
-## Performance Tips
+# Run tests (when implemented)
+pytest
+```
 
-1. **Use GPU Acceleration**: Ensure Ollama is using your GPU:
-   ```bash
-   # Check GPU usage
-   nvidia-smi  # For NVIDIA
-   ```
+### Project Structure
 
-2. **Model Selection**: Smaller models are faster but less capable:
-   - `qwen2.5-coder:14b` - Recommended balance
-   - `qwen2.5-coder:7b` - Faster, slightly less capable
-   - `codellama:34b` - More capable, requires more VRAM
-
-3. **Context Management**: AZUL automatically manages context to stay within model limits
+```
+azul/
+├── __init__.py
+├── cli.py                 # Main entry point
+├── llama_client.py        # LLM model wrapper
+├── agent.py               # LangChain agent executor
+├── tools.py               # Tool implementations
+├── tui.py                 # Textual TUI application
+├── session_manager.py     # Conversation history
+└── config/
+    ├── __init__.py
+    └── manager.py         # Configuration management
+```
 
 ## Troubleshooting
 
-### Ollama Connection Errors
-
-If you see connection errors:
-```bash
-# Check if Ollama is running
-ollama list
-
-# Start Ollama server if needed
-ollama serve
-```
-
 ### Model Not Found
 
-If a model isn't found:
-```bash
-# List available models
-ollama list
+Ensure the model file is in one of the search paths or use `--model-path` to specify it directly.
 
-# Pull the model
-ollama pull qwen2.5-coder:14b
+### Out of Memory
+
+- Use a smaller quantized model (q4_k_m or q3_k_m)
+- Reduce context window size in configuration
+- Close other applications
+
+### Nano Not Working
+
+Ensure `nano` is installed and available in your PATH:
+```bash
+which nano
 ```
 
-### File Permission Errors
+### GPU Not Detected
 
-If file operations fail:
-- Check that files are within the project directory
-- Ensure you have write permissions
-- Verify the file isn't binary or too large (>10MB)
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+- Mac: Install with `pip install -e ".[metal]"`
+- NVIDIA: Install with `pip install -e ".[cuda]"` and ensure CUDA is properly installed
 
 ## License
 
-MIT License
+MIT
 
-## Acknowledgments
+## Contributing
 
-- Built with [Ollama](https://ollama.ai/)
-- Inspired by Anthropic's Claude Code
-- Uses [Rich](https://github.com/Textualize/rich) for beautiful terminal output
+Contributions welcome! Please read the architecture documentation and follow the existing code style.
 
