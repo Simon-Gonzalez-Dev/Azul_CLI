@@ -43,11 +43,10 @@ class AzulTUI(App):
     
     #nano_display {
         height: 100%;
-        display: none;
     }
     
-    #nano_display:visible {
-        display: block;
+    #nano_display.hidden {
+        display: none;
     }
     """
     
@@ -70,7 +69,7 @@ class AzulTUI(App):
         super().__init__()
         self.agent = agent
         self.session = session
-        self.is_running = False
+        self._agent_running = False
         self.input_queue = []
     
     def compose(self) -> ComposeResult:
@@ -112,7 +111,7 @@ class AzulTUI(App):
         if not user_input:
             return
         
-        if self.is_running:
+        if self._agent_running:
             # Queue input if agent is running
             self.input_queue.append(user_input)
             self.update_status("Input queued. Agent is running...")
@@ -139,7 +138,7 @@ class AzulTUI(App):
     
     def run_agent(self, user_input: str):
         """Run agent with user input (non-blocking)."""
-        self.is_running = True
+        self._agent_running = True
         self.update_status("Running Agent...")
         
         # Clear workspace for new task
@@ -190,7 +189,7 @@ class AzulTUI(App):
                 next_input = self.input_queue.pop(0)
                 self.run_agent(next_input)
             else:
-                self.is_running = False
+                self._agent_running = False
                 self.update_status("Ready")
                 self.query_one("#user_input").focus()
         
@@ -198,7 +197,7 @@ class AzulTUI(App):
             error_msg = f"Error: {str(e)}"
             self.query_one("#agent_log").write(f"[red]{error_msg}[/red]")
             self.update_status("Error occurred")
-            self.is_running = False
+            self._agent_running = False
             self.query_one("#user_input").focus()
     
     def on_thinking(self, text: str):
