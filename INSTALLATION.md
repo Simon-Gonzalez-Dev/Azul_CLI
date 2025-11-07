@@ -1,6 +1,27 @@
 # AZUL Installation Guide
 
-## System Requirements
+## ⚡ Quick Setup (Recommended)
+
+**For the fastest setup, use the automated script:**
+
+```bash
+./setup.sh
+```
+
+This script will automatically:
+- Create the `azul_env` virtual environment
+- Install all Python dependencies
+- Install Bun (if needed)
+- Install frontend dependencies
+- Verify everything is ready
+
+**Skip to "First Launch" section below if using the script.**
+
+---
+
+## Manual Installation
+
+If you prefer to install manually or need more control, follow the steps below.
 
 - **Operating System**: macOS, Linux, or Windows (WSL recommended)
 - **Python**: 3.10 or higher
@@ -19,46 +40,24 @@ Before you begin, verify you have:
 
 ## Step-by-Step Installation
 
-###1. Install poetry ###
+### 1. Create Python Virtual Environment
 
-The curl installer is now deprecated. The modern, recommended way to install Python command-line applications like Poetry is with a tool called pipx. This tool installs applications into their own isolated environments, so their dependencies never conflict with each other or your global Python.
-This is the most robust and future-proof solution.
-**Step 1: Clean Up the Old Installation**
-First, we need to completely remove the installation made by the old script to prevent any conflicts.
-code
-Bash
-# This command removes the binaries and the environment created by the old installer
-rm -rf "$HOME/.local/bin/poetry"
-rm -rf "$HOME/Library/Application Support/pypoetry"
-You should also remove the export PATH="$HOME/.local/bin:$PATH" line from your shell's startup file (e.g., ~/.zshrc, ~/.bash_profile) if you added it there, as pipx will provide its own instructions.
-**Step 2: Install pipx**
-pipx is the correct tool for this job. You can install it using Homebrew (if you have it) or with Python itself.
-code
-Bash
-# The recommended way is with Homebrew
-brew install pipx
-pipx ensurepath
-After running pipx ensurepath, you may need to restart your terminal for the PATH changes to take effect.
-**Step 3: Install Poetry with pipx**
-Now, use pipx to install Poetry. pipx will automatically handle creating a clean, compatible environment for it.
-code
-Bash
-pipx install poetry
-Step 4: Verify the New Installation
-After restarting your terminal or sourcing your profile, test the new installation. This should now work correctly.
-code
-Bash
-poetry --version
-This command should now print the Poetry version without any TypeError.
-
-**Add to PATH** (if needed):
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+# Navigate to project directory
+cd /path/to/Azul_CLI
+
+# Create virtual environment
+python3 -m venv azul_env
+
+# Activate virtual environment
+source azul_env/bin/activate  # On macOS/Linux
+# or
+azul_env\Scripts\activate  # On Windows
 ```
 
-Verify installation:
+Verify activation (you should see `(azul_env)` in your prompt):
 ```bash
-poetry --version
+which python  # Should point to azul_env/bin/python
 ```
 
 ### 2. Install Bun (JavaScript Runtime)
@@ -72,23 +71,52 @@ curl -fsSL https://bun.sh/install | bash
 ```powershell
 irm bun.sh/install.ps1 | iex
 ```
+Make path visable
+```bash
+exec /bin/zsh
+```
 
 Verify installation:
 ```bash
 bun --version
 ```
 
-### 3. Navigate to Project Directory
+### 3. Install Backend Dependencies
+
+Make sure the virtual environment is activated (you should see `(azul_env)` in your prompt):
 
 ```bash
-cd /Users/simongonzalez/Desktop/AZUL/Azul_CLI
+# Upgrade pip first
+pip install --upgrade pip setuptools wheel
+
+# Install core dependencies
+pip install websockets ">=12.0"
+pip install "langchain>=0.1.0"
+pip install "langchain-core>=0.1.0"
+pip install "langgraph>=0.0.20"
+pip install "langchain-community>=0.0.20"
+pip install "pydantic>=2.0"
+pip install "pydantic-settings>=2.0"
+
+# Install llama-cpp-python (takes 5-10 minutes)
+pip install llama-cpp-python
 ```
 
-### 4. Install Backend Dependencies
+**For GPU acceleration** (optional but recommended):
 
+**macOS with Apple Silicon (M1/M2/M3):**
 ```bash
-cd azul-backend
-poetry install
+CMAKE_ARGS="-DLLAMA_METAL=on" pip install llama-cpp-python
+```
+
+**Linux/Windows with NVIDIA GPU:**
+```bash
+CMAKE_ARGS="-DLLAMA_CUBLAS=on" pip install llama-cpp-python
+```
+
+**CPU Only (no GPU acceleration):**
+```bash
+pip install llama-cpp-python
 ```
 
 **This will install:**
@@ -98,30 +126,21 @@ poetry install
 - langgraph (Agent execution)
 - pydantic (Data validation)
 
-**Troubleshooting llama-cpp-python:**
-
-If installation fails, try platform-specific builds:
-
-**macOS with Apple Silicon (M1/M2/M3):**
-```bash
-CMAKE_ARGS="-DLLAMA_METAL=on" poetry install
-```
-
-**Linux/Windows with NVIDIA GPU:**
-```bash
-CMAKE_ARGS="-DLLAMA_CUBLAS=on" poetry install
-```
-
-**CPU Only (no GPU acceleration):**
-```bash
-CMAKE_ARGS="-DLLAMA_BLAS=OFF -DLLAMA_CUBLAS=OFF -DLLAMA_METAL=OFF" poetry install
-```
-
-### 5. Install Frontend Dependencies
+### 4. Install Frontend Dependencies
 
 ```bash
-cd ../azul-ui
+cd azul-ui
 bun install
+```
+
+# ink box issue
+
+``` bash
+# First, remove the bad entry
+bun remove ink-box
+
+# Then, add it back correctly
+bun add ink-box
 ```
 
 **This will install:**
@@ -131,7 +150,7 @@ bun install
 - ink-text-input (Input component)
 - TypeScript and type definitions
 
-### 6. Verify Model File
+### 5. Verify Model File
 
 Check that the model file exists:
 
@@ -157,9 +176,17 @@ Test each component separately:
 
 ### Test Backend
 
+Make sure the virtual environment is activated:
+
 ```bash
+source azul_env/bin/activate  # If not already activated
 cd azul-backend/src
 python -m azul_core.server
+```
+
+Or use the venv Python directly:
+```bash
+azul_env/bin/python -m azul_core.server
 ```
 
 Expected output:
@@ -229,12 +256,16 @@ model_path: Path = Path(__file__).parent.parent.parent.parent / "models" / "your
 
 ## Common Installation Issues
 
-### Issue: "poetry: command not found"
+### Issue: "azul_env not found"
 
-**Solution**: Add Poetry to PATH
+**Solution**: Run the setup script or create manually
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc  # or ~/.bashrc
+# Use the automated script
+./setup.sh
+
+# Or create manually
+python3 -m venv azul_env
+source azul_env/bin/activate
 ```
 
 ### Issue: "bun: command not found"
@@ -296,16 +327,14 @@ lsof -ti:8765 | xargs kill -9
 To remove AZUL:
 
 ```bash
-# Remove Python dependencies
-cd azul-backend
-poetry env remove --all
+# Remove virtual environment
+rm -rf azul_env
 
 # Remove Node dependencies
-cd ../azul-ui
+cd azul-ui
 rm -rf node_modules
 
-# Remove Poetry and Bun (optional)
-curl -sSL https://install.python-poetry.org | python3 - --uninstall
+# Remove Bun (optional)
 rm -rf ~/.bun
 ```
 
@@ -314,12 +343,14 @@ rm -rf ~/.bun
 To update dependencies:
 
 ```bash
-# Update backend
-cd azul-backend
-poetry update
+# Activate virtual environment
+source azul_env/bin/activate
+
+# Update backend dependencies
+pip install --upgrade websockets langchain langchain-core langgraph langchain-community pydantic pydantic-settings llama-cpp-python
 
 # Update frontend
-cd ../azul-ui
+cd azul-ui
 bun update
 ```
 

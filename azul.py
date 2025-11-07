@@ -30,6 +30,10 @@ BANNER = """
 PROJECT_ROOT = Path(__file__).parent
 BACKEND_DIR = PROJECT_ROOT / "azul-backend"
 FRONTEND_DIR = PROJECT_ROOT / "azul-ui"
+VENV_DIR = PROJECT_ROOT / "azul_env"
+VENV_PYTHON = VENV_DIR / "bin" / "python"
+if sys.platform == "win32":
+    VENV_PYTHON = VENV_DIR / "Scripts" / "python.exe"
 
 
 def print_banner():
@@ -68,14 +72,26 @@ def check_dependencies():
     """Check if required dependencies are installed."""
     errors = []
     
-    # Check Python dependencies
+    # Check if virtual environment exists
+    if not VENV_DIR.exists() or not VENV_PYTHON.exists():
+        errors.append("Virtual environment 'azul_env' not found")
+        errors.append("  Run: ./setup.sh")
+        errors.append("  Or: bash setup.sh")
+        return errors
+    
+    # Check Python dependencies using venv Python
     try:
-        import websockets
-        import llama_cpp
-        import langchain
-    except ImportError as e:
-        errors.append(f"Python dependency missing: {e.name}")
-        errors.append(f"  Install with: cd azul-backend && poetry install")
+        result = subprocess.run(
+            [str(VENV_PYTHON), "-c", "import websockets, llama_cpp, langchain"],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            errors.append("Python dependencies not installed in azul_env")
+            errors.append("  Run: ./setup.sh")
+    except Exception as e:
+        errors.append(f"Error checking Python dependencies: {e}")
+        errors.append("  Run: ./setup.sh")
     
     # Check if Bun is installed
     try:
@@ -83,9 +99,11 @@ def check_dependencies():
         if result.returncode != 0:
             errors.append("Bun is not installed")
             errors.append("  Install from: https://bun.sh")
+            errors.append("  Or run: ./setup.sh (will install Bun automatically)")
     except FileNotFoundError:
         errors.append("Bun is not installed")
         errors.append("  Install from: https://bun.sh")
+        errors.append("  Or run: ./setup.sh (will install Bun automatically)")
     
     # Check if model exists
     model_path = PROJECT_ROOT / "models" / "qwen2.5-coder-7b-instruct-q4_k_m.gguf"
@@ -120,10 +138,10 @@ def main():
     frontend_process = None
     
     try:
-        # Start backend server
+        # Start backend server using venv Python
         print(f"{YELLOW}Starting AZUL backend server...{RESET}")
         backend_process = subprocess.Popen(
-            [sys.executable, "-m", "azul_core.server"],
+            [str(VENV_PYTHON), "-m", "azul_core.server"],
             cwd=BACKEND_DIR / "src",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE

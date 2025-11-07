@@ -1,45 +1,56 @@
 # AZUL Quick Start Guide
 
-## 🚀 Get Started in 3 Steps
+## 🚀 Get Started in 2 Steps
 
-### Step 1: Install Dependencies
+### Step 1: Run the Setup Script
+
+The setup script automates everything! It will:
+- ✅ Create a Python virtual environment (`azul_env`)
+- ✅ Install all Python dependencies
+- ✅ Install Bun (if not already installed)
+- ✅ Install frontend dependencies
+- ✅ Verify the model file
 
 ```bash
-# Install Poetry (Python package manager)
-curl -sSL https://install.python-poetry.org | python3 -
+# Make sure you're in the project root
+cd /path/to/Azul_CLI
 
-# Install Bun (JavaScript runtime)
-curl -fsSL https://bun.sh/install | bash
-
-# Install Python dependencies
-cd azul-backend
-poetry install
-
-# Install Node dependencies
-cd ../azul-ui
-bun install
+# Run the setup script
+./setup.sh
 ```
 
 **⏱️ Expected time**: 5-15 minutes (llama-cpp-python compilation takes the longest)
 
-### Step 2: Verify Model
+**Note**: The script will automatically detect your platform and enable GPU acceleration if available (Metal on macOS, CUDA on Linux/Windows).
 
-Make sure you have the model file:
+### Step 2: Launch AZUL
 
+The setup script verifies the model automatically. If it's missing, you'll see instructions.
+
+Now launch AZUL:
+
+**Option A: Global command (if installed with sudo)**
 ```bash
-ls models/qwen2.5-coder-7b-instruct-q4_k_m.gguf
+# From ANY directory
+azul
 ```
 
-If the model is missing, download a GGUF model and place it in the `models/` directory.
-
-### Step 3: Launch AZUL
-
+**Option B: From project directory**
 ```bash
+# From the project root (no need to activate venv manually)
 cd /path/to/Azul_CLI
 python azul.py
 ```
 
+**Option C: Using the launcher**
+```bash
+# From ANY directory
+/path/to/Azul_CLI/azul_launcher.sh
+```
+
 That's it! 🎉
+
+**Note**: The launcher automatically uses the `azul_env` virtual environment, so you don't need to activate it manually.
 
 ## 📝 First Commands to Try
 
@@ -85,23 +96,33 @@ ls -lh models/
 ```
 
 ### "llama-cpp-python won't install"
-Try with explicit flags:
+The setup script handles this automatically, but if you're installing manually:
+
 ```bash
 # macOS Metal (GPU)
-CMAKE_ARGS="-DLLAMA_METAL=on" poetry install
+CMAKE_ARGS="-DLLAMA_METAL=on" pip install llama-cpp-python
 
 # CUDA (NVIDIA GPU)
-CMAKE_ARGS="-DLLAMA_CUBLAS=on" poetry install
+CMAKE_ARGS="-DLLAMA_CUBLAS=on" pip install llama-cpp-python
 ```
 
 ## 🔧 Manual Testing
 
 Test each component separately:
 
-**Backend only**:
+**Backend only** (using venv):
 ```bash
+# Activate the virtual environment first
+source azul_env/bin/activate
+
+# Then run the server
 cd azul-backend/src
 python -m azul_core.server
+```
+
+**Or use the venv Python directly**:
+```bash
+azul_env/bin/python -m azul_core.server
 ```
 
 **Frontend only** (start backend first):
@@ -109,6 +130,35 @@ python -m azul_core.server
 cd azul-ui
 bun run src/main.tsx
 ```
+
+## 🛠️ Manual Setup (Alternative)
+
+If you prefer to set up manually instead of using the script:
+
+1. **Create virtual environment**:
+   ```bash
+   python3 -m venv azul_env
+   source azul_env/bin/activate
+   ```
+
+2. **Install Python dependencies**:
+   ```bash
+   pip install --upgrade pip
+   pip install websockets langchain langchain-core langgraph langchain-community pydantic pydantic-settings
+   pip install llama-cpp-python  # May take 5-10 minutes
+   ```
+
+3. **Install Bun** (if not installed):
+   ```bash
+   curl -fsSL https://bun.sh/install | bash
+   exec /bin/zsh  # or restart terminal
+   ```
+
+4. **Install frontend dependencies**:
+   ```bash
+   cd azul-ui
+   bun install
+   ```
 
 ## 📚 Next Steps
 
