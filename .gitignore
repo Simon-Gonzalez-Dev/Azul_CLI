@@ -19,13 +19,13 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
 # Virtual environments
 venv/
 env/
 ENV/
-.venv
+azul_env/
+.venv/
 
 # IDE
 .vscode/
@@ -33,30 +33,21 @@ ENV/
 *.swp
 *.swo
 *~
+
+# OS
 .DS_Store
+Thumbs.db
 
 # AZUL specific
-azul/models/*.gguf
-azul/models/*.bin
-~/.azul/
+.azul/
+*.gguf
+*.ggml
+models/
+
+# Sessions
+sessions/
 *.session
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Model files (large)
-*.gguf
-*.bin
-*.safetensors
-
-# Session data
-sessions/
-*.json
-!package.json
+# Logs
+*.log
 

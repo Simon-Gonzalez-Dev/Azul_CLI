@@ -1,143 +1,134 @@
-# AZUL - Local Agentic AI Coding Assistant
+# AZUL - Agentic AI Coding Assistant
 
-AZUL is a fully agentic coding assistant that operates entirely on your local machine. It uses llama.cpp via llama-cpp-python to run the qwen2.5-coder-7b-instruct-q4_k_m.gguf model locally, orchestrated through LangChain for tool-calling, presented via a Textual TUI, and executing file operations transparently through nano via pexpect.
+AZUL is an autonomous AI coding assistant that runs entirely on your local hardware using llama-cpp-python. It provides real-time visibility into agent reasoning, tool execution, and responses through a minimalist TUI interface.
 
 ## Features
 
-- **Fully Local**: Runs entirely on your machine, no API calls
-- **Agentic Architecture**: Uses LangChain for Think-Plan-Act loops
-- **Transparent File Operations**: All edits performed through nano for full auditability
-- **Modern TUI**: Beautiful, responsive terminal interface built with Textual
-- **Two Operation Modes**: Agentic mode (default) and Simple mode (backward compatible)
+- **Local-First**: Runs entirely on local hardware using llama-cpp-python
+- **Agentic Loop**: Think → Plan → Act → Observe → Respond
+- **Real-time Feedback**: All agent steps are exposed via callbacks
+- **Tool Transparency**: Every tool execution is logged and visible
+- **Minimalist TUI**: Clean, agentic interface matching Claude Code aesthetic
+
+## Requirements
+
+- Python 3.8 or higher
+- A GGUF model file (compatible with llama-cpp-python)
+- CUDA/GPU support (optional, but recommended for performance)
 
 ## Installation
 
-### Prerequisites
+1. **Clone or navigate to the AZUL directory:**
+   ```bash
+   cd Azul_CLI
+   ```
 
-- Python 3.12 or higher
-- 4-8GB RAM (for 7B model)
-- GPU optional but recommended (Metal on Mac, CUDA on NVIDIA)
+2. **Create a virtual environment:**
+   ```bash
+   python3 -m venv azul_env
+   ```
 
-### Install AZUL
+3. **Activate the virtual environment:**
+   ```bash
+   # On macOS/Linux:
+   source azul_env/bin/activate
+   
+   # On Windows:
+   azul_env\Scripts\activate
+   ```
 
-```bash
-# Clone the repository
-git clone <repository-url>
-cd Azul_CLI
+4. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-# Install with pip
-pip install -e .
+5. **Install AZUL in development mode:**
+   ```bash
+   pip install -e .
+   ```
 
-# Or install with GPU support (Mac)
-pip install -e ".[metal]"
+6. **Set the model path environment variable:**
+   ```bash
+   export AZUL_MODEL_PATH=/path/to/your/model.gguf
+   ```
 
-# Or install with GPU support (NVIDIA)
-pip install -e ".[cuda]"
-```
-
-### Download Model
-
-Download the qwen2.5-coder-7b-instruct-q4_k_m.gguf model and place it in one of these locations:
-
-1. `azul/models/` (package directory)
-2. `~/.azul/models/` (user-specific)
-3. `~/models/` (common location)
-4. Current working directory
-
-Or specify the path with `--model-path` when running AZUL.
+   Or add it to your shell profile (`.bashrc`, `.zshrc`, etc.):
+   ```bash
+   echo 'export AZUL_MODEL_PATH=/path/to/your/model.gguf' >> ~/.zshrc
+   source ~/.zshrc
+   ```
 
 ## Usage
 
-### Agentic Mode (Default)
+After activating the virtual environment and setting `AZUL_MODEL_PATH`, simply run:
 
 ```bash
 azul
 ```
 
-This launches the interactive TUI. Simply type your request:
+This will start an interactive session. Type your requests and AZUL will execute them using its available tools:
+
+- `read_file(file_path)` - Read files from the filesystem
+- `write_file_nano(file_path, new_content)` - Create or overwrite files
+- `delete_file(file_path)` - Delete files
+- `respond_to_user(message)` - Signal completion and respond
+
+Type `exit`, `quit`, or `q` to exit the session.
+
+## Example
 
 ```
-User: Create a Python script that reads a CSV file and prints statistics
-Agent: [THINKING] → [PLAN] → [read_file] → [write_file_nano] → [RESPOND]
-```
+> User: Create a python file named app.py that prints "Hello, Agent!"
 
-### Simple Mode
-
-```bash
-azul --simple
-```
-
-For quick tasks without the full agentic interface.
-
-### Command Line Options
-
-```bash
-azul --help              # Show help
-azul --model-path PATH   # Specify model file path
-azul --simple            # Use simple mode
+┌─ Agent is working... ──────────────────────────────────────────────────┐
+│    THINKING: Analyzing request: Create a python file...                 │
+│    PLAN:                                                                │
+│    1. Call write_file_nano with path 'app.py' and the Python code.     │
+│ ⚡ ACTION: write_file_nano('app.py', 'print("Hello, Agent!")')          │
+│   RESULT: Successfully wrote to app.py.                                │
+└────────────────────────────────────────────────────────────────────────┘
+  AZUL: I have created the file `app.py` for you.
 ```
 
 ## Architecture
 
-See [local_ai_process.md](local_ai_process.md) for complete architecture documentation.
+AZUL consists of several key components:
 
-## Development
+- **llama_client.py**: Direct interface to llama-cpp-python
+- **agent.py**: LangChain/LangGraph agent integration with ReAct pattern
+- **tools.py**: File system operations (read, write, delete)
+- **tui.py**: Rich-based TUI frontend
+- **session_manager.py**: Conversation history persistence
+- **cli.py**: Main CLI entry point
 
-### Setup Development Environment
+## Configuration
 
-```bash
-# Install development dependencies
-pip install -e ".[dev]"
+Configuration is managed through environment variables:
 
-# Run tests (when implemented)
-pytest
-```
+- `AZUL_MODEL_PATH` (required): Path to your GGUF model file
 
-### Project Structure
-
-```
-azul/
-├── __init__.py
-├── cli.py                 # Main entry point
-├── llama_client.py        # LLM model wrapper
-├── agent.py               # LangChain agent executor
-├── tools.py               # Tool implementations
-├── tui.py                 # Textual TUI application
-├── session_manager.py     # Conversation history
-└── config/
-    ├── __init__.py
-    └── manager.py         # Configuration management
-```
+Session data is stored in `~/.azul/sessions/` by default.
 
 ## Troubleshooting
 
-### Model Not Found
+**Model not found:**
+- Ensure `AZUL_MODEL_PATH` is set correctly
+- Verify the model file exists at the specified path
+- Check file permissions
 
-Ensure the model file is in one of the search paths or use `--model-path` to specify it directly.
+**Import errors:**
+- Make sure the virtual environment is activated
+- Reinstall dependencies: `pip install -r requirements.txt`
 
-### Out of Memory
-
-- Use a smaller quantized model (q4_k_m or q3_k_m)
-- Reduce context window size in configuration
-- Close other applications
-
-### Nano Not Working
-
-Ensure `nano` is installed and available in your PATH:
-```bash
-which nano
-```
-
-### GPU Not Detected
-
-- Mac: Install with `pip install -e ".[metal]"`
-- NVIDIA: Install with `pip install -e ".[cuda]"` and ensure CUDA is properly installed
+**Performance issues:**
+- Ensure you have GPU support enabled (n_gpu_layers=-1 by default)
+- Try a smaller model or reduce n_ctx if running out of memory
 
 ## License
 
-MIT
+MIT License
 
 ## Contributing
 
-Contributions welcome! Please read the architecture documentation and follow the existing code style.
+Contributions are welcome! Please feel free to submit a Pull Request.
 

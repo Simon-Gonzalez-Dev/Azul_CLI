@@ -1,45 +1,25 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "azul"
 version = "0.1.0"
-description = "AZUL - Local Agentic AI Coding Assistant CLI"
+description = "An agentic AI coding assistant using local LLMs"
 readme = "README.md"
-requires-python = ">=3.12"
-license = {text = "MIT"}
-authors = [
-    {name = "AZUL Contributors"}
-]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
-]
-
+requires-python = ">=3.8"
 dependencies = [
     "llama-cpp-python>=0.2.0",
     "langchain>=0.1.0",
+    "langchain-core>=0.1.0",
+    "langgraph>=0.0.20",
     "langchain-community>=0.0.20",
-    "langgraph>=1.0.0",
-    "textual>=0.45.0",
     "rich>=13.0.0",
-    "pexpect>=4.8.0",
 ]
-
-[project.optional-dependencies]
-metal = ["llama-cpp-python[metal]>=0.2.0"]
-cuda = ["llama-cpp-python[cuda]>=0.2.0"]
 
 [project.scripts]
 azul = "azul.cli:main"
 
 [tool.setuptools]
 packages = ["azul", "azul.config"]
-
-[tool.setuptools.package-data]
-azul = ["models/*.gguf"]
 
