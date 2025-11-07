@@ -1,6 +1,8 @@
 """Main CLI entry point for AZUL."""
 
+import os
 import signal
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,6 +23,76 @@ def signal_handler(sig, frame):
     global shutdown_requested
     shutdown_requested = True
     print("\n\nShutting down gracefully...", file=sys.stderr)
+
+
+def handle_manual_command(command: str, tui: AzulTUI, session_manager: SessionManager, agent: AzulAgent) -> bool:
+    """
+    Handle manual commands starting with @.
+    Returns True if command was handled, False otherwise.
+    """
+    if not command.startswith('@'):
+        return False
+    
+    parts = command[1:].strip().split(maxsplit=1)
+    cmd = parts[0].lower()
+    args = parts[1] if len(parts) > 1 else ""
+    
+    if cmd == "ls":
+        # Handle @ls command
+        try:
+            if args:
+                # List specific directory
+                result = subprocess.run(['ls', '-la', args], capture_output=True, text=True, timeout=5)
+            else:
+                # List current directory
+                result = subprocess.run(['ls', '-la'], capture_output=True, text=True, timeout=5)
+            
+            if result.returncode == 0:
+                tui.console.print(result.stdout)
+            else:
+                tui.console.print(f"[red]Error:[/red] {result.stderr}", style="red")
+        except subprocess.TimeoutExpired:
+            tui.console.print("[red]Error: Command timed out[/red]")
+        except Exception as e:
+            tui.console.print(f"[red]Error executing ls:[/red] {str(e)}")
+        return True
+    
+    elif cmd == "cd":
+        # Handle @cd command
+        try:
+            if args:
+                target_dir = args.strip()
+            else:
+                # Default to home directory
+                target_dir = os.path.expanduser("~")
+            
+            os.chdir(target_dir)
+            tui.console.print(f"[green]Changed directory to:[/green] {os.getcwd()}")
+        except FileNotFoundError:
+            tui.console.print(f"[red]Error: Directory not found:[/red] {args}")
+        except PermissionError:
+            tui.console.print(f"[red]Error: Permission denied:[/red] {args}")
+        except Exception as e:
+            tui.console.print(f"[red]Error changing directory:[/red] {str(e)}")
+        return True
+    
+    elif cmd == "reset":
+        # Handle @reset command
+        try:
+            # Clear session manager
+            session_manager.clear()
+            # Clear agent conversation history
+            agent.conversation_history = []
+            tui.console.print("[yellow]Memory reset: Conversation history cleared.[/yellow]")
+            tui.clear_agent_box()
+        except Exception as e:
+            tui.console.print(f"[red]Error resetting memory:[/red] {str(e)}")
+        return True
+    
+    # Unknown @ command
+    tui.console.print(f"[yellow]Unknown command:[/yellow] @{cmd}")
+    tui.console.print("[dim]Available commands: @ls, @cd [path], @reset[/dim]")
+    return True
 
 
 def main():
@@ -75,6 +147,10 @@ def main():
                 
                 if not user_input.strip():
                     continue
+                
+                # Handle manual commands (take priority, don't send to model)
+                if handle_manual_command(user_input, tui, session_manager, agent):
+                    continue  # Skip sending to agent
                 
                 # Display user input
                 tui.display_user_input(user_input)
