@@ -1,6 +1,7 @@
 """File system tools for the agent."""
 
 import os
+import subprocess
 from pathlib import Path
 from typing import Optional, Callable
 
@@ -173,15 +174,94 @@ def delete_file_tool(file_path: str) -> str:
         return f"Error deleting file {file_path}: {str(e)}"
 
 
-def respond_to_user_tool(message: str) -> str:
+def respond_to_user_tool(message: str, thought_process: Optional[str] = None) -> str:
     """
     Signal that the agent has completed its task and should respond to the user.
     
     Args:
         message: The final response message for the user
+        thought_process: Optional reasoning steps that led to this response
         
     Returns:
         Formatted response string
     """
+    if thought_process:
+        return f"RESPOND: {message}\n\nTHOUGHT_PROCESS: {thought_process}"
     return f"RESPOND: {message}"
+
+
+def search_code_base_tool(query: str) -> str:
+    """
+    Search for code snippets or keywords in the current directory recursively.
+    
+    Args:
+        query: The search term or code snippet to find
+        
+    Returns:
+        List of matching lines with file paths and line numbers, or error message
+    """
+    try:
+        # -r for recursive, -n for line numbers, -i for case-insensitive
+        result = subprocess.run(
+            ['grep', '-rni', query, '.'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.stdout:
+            return result.stdout
+        else:
+            return f"No results found for '{query}'."
+    except subprocess.TimeoutExpired:
+        return f"Search timed out for '{query}'."
+    except FileNotFoundError:
+        return "Error: 'grep' command not found. Please install grep."
+    except Exception as e:
+        return f"Error searching for '{query}': {str(e)}"
+
+
+def execute_shell_command_tool(command: str) -> str:
+    """
+    Execute a shell command and return its output.
+    USE WITH CAUTION. Intended for safe, non-interactive commands.
+    
+    Args:
+        command: Shell command to execute
+        
+    Returns:
+        Command output and error messages
+    """
+    try:
+        # Block dangerous commands
+        dangerous = ['rm -rf', 'format', 'del /f', 'sudo', 'mkfs', 'dd if=']
+        cmd_lower = command.lower()
+        for danger in dangerous:
+            if danger in cmd_lower:
+                return f"Error: Command blocked for safety: {command}"
+        
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        output = f"STDOUT:\n{result.stdout}\n"
+        if result.stderr:
+            output += f"STDERR:\n{result.stderr}"
+        return output if output.strip() else "Command executed successfully (no output)."
+    except subprocess.TimeoutExpired:
+        return f"Error: Command timed out after 30 seconds: {command}"
+    except Exception as e:
+        return f"Error executing command '{command}': {str(e)}"
+
+
+def reset_memory_tool() -> str:
+    """
+    Reset the conversation memory/history.
+    
+    Returns:
+        Success message
+    """
+    return "RESET_MEMORY: Conversation history cleared."
 

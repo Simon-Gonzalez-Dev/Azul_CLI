@@ -1,7 +1,8 @@
 """LLM client wrapper for llama-cpp-python."""
 
+import time
 from pathlib import Path
-from typing import Dict, Generator, List, Optional
+from typing import Dict, Generator, List, Optional, Tuple
 from llama_cpp import Llama
 
 
@@ -85,6 +86,10 @@ class LlamaClient:
             return messages[-10:]
         return messages
     
+    def _estimate_tokens(self, text: str) -> int:
+        """Rough token estimation: ~4 characters per token."""
+        return len(text) // 4
+    
     def chat(
         self,
         user_message: str,
@@ -94,8 +99,8 @@ class LlamaClient:
         temperature: float = 0.7,
         top_p: float = 0.9,
         repeat_penalty: float = 1.1
-    ) -> str:
-        """Generate a chat response."""
+    ) -> Tuple[str, Dict[str, float]]:
+        """Generate a chat response with stats."""
         messages = conversation_history or []
         messages.append({"role": "user", "content": user_message})
         
@@ -105,7 +110,11 @@ class LlamaClient:
         # Format prompt
         prompt = self._format_qwen_messages(messages, system_prompt)
         
-        # Generate response
+        # Estimate input tokens
+        input_tokens = self._estimate_tokens(prompt)
+        
+        # Generate response with timing
+        start_time = time.time()
         response = self.model(
             prompt,
             max_tokens=max_tokens,
@@ -115,8 +124,22 @@ class LlamaClient:
             stop=["<|im_end|>", "<|im_start|>"],
             echo=False
         )
+        elapsed_time = time.time() - start_time
         
-        return response["choices"][0]["text"].strip()
+        output_text = response["choices"][0]["text"].strip()
+        output_tokens = self._estimate_tokens(output_text)
+        
+        # Calculate tokens per second
+        tokens_per_sec = output_tokens / elapsed_time if elapsed_time > 0 else 0
+        
+        stats = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "tokens_per_second": tokens_per_sec,
+            "generation_time": elapsed_time
+        }
+        
+        return output_text, stats
     
     def stream_chat(
         self,
@@ -127,8 +150,8 @@ class LlamaClient:
         temperature: float = 0.7,
         top_p: float = 0.9,
         repeat_penalty: float = 1.1
-    ) -> Generator[str, None, None]:
-        """Stream chat response tokens."""
+    ) -> Generator[Tuple[str, Optional[Dict[str, float]]], None, None]:
+        """Stream chat response tokens with stats."""
         messages = conversation_history or []
         messages.append({"role": "user", "content": user_message})
         
@@ -138,7 +161,13 @@ class LlamaClient:
         # Format prompt
         prompt = self._format_qwen_messages(messages, system_prompt)
         
-        # Stream response
+        # Estimate input tokens
+        input_tokens = self._estimate_tokens(prompt)
+        
+        # Stream response with timing
+        start_time = time.time()
+        full_text = ""
+        
         stream = self.model(
             prompt,
             max_tokens=max_tokens,
@@ -154,5 +183,21 @@ class LlamaClient:
             if "choices" in chunk and len(chunk["choices"]) > 0:
                 delta = chunk["choices"][0].get("text", "")
                 if delta:
-                    yield delta
+                    full_text += delta
+                    yield delta, None
+        
+        # Calculate final stats
+        elapsed_time = time.time() - start_time
+        output_tokens = self._estimate_tokens(full_text)
+        tokens_per_sec = output_tokens / elapsed_time if elapsed_time > 0 else 0
+        
+        stats = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "tokens_per_second": tokens_per_sec,
+            "generation_time": elapsed_time
+        }
+        
+        # Yield final stats
+        yield "", stats
 

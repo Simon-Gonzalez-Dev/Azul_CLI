@@ -4,6 +4,8 @@ import signal
 import sys
 from pathlib import Path
 
+from rich.console import Console
+
 from azul.agent import AzulAgent
 from azul.config.manager import Config
 from azul.session_manager import SessionManager
@@ -52,6 +54,7 @@ def main():
                 "observation": tui.on_observation,
                 "start_generation": tui.start_generation,
                 "permission_request": tui.request_permission,
+                "stats": tui.on_stats,
             }
         )
         
@@ -87,6 +90,13 @@ def main():
                     tui.clear_agent_box()
                     continue
                 
+                # Handle memory reset
+                if "RESET_MEMORY:" in response or "Memory reset successfully" in response:
+                    session_manager.clear()
+                    tui.console.print("[yellow]Memory reset: Conversation history cleared.[/yellow]")
+                    tui.clear_agent_box()
+                    continue
+                
                 # Clear agent box
                 tui.clear_agent_box()
                 
@@ -116,8 +126,15 @@ def main():
         print(f"Unexpected error: {e}", file=sys.stderr)
         sys.exit(1)
     finally:
-        # Clean up
-        tui.stop_live_display()
+        # Ensure terminal is cleaned up properly
+        if tui:
+            tui.stop_live_display()
+        # Ensure cursor is visible
+        try:
+            console = Console()
+            console.show_cursor(True)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
