@@ -1,0 +1,28 @@
+{
+  "name": "azul-ui",
+  "version": "0.1.0",
+  "description": "AZUL - Local AI Coding Assistant UI",
+  "type": "module",
+  "bin": {
+    "azul-ui": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "bun build src/main.tsx --outdir dist --target node",
+    "start": "bun run src/main.tsx",
+    "dev": "bun run src/main.tsx"
+  },
+  "dependencies": {
+    "ink": "^4.4.1",
+    "react": "^18.2.0",
+    "ws": "^8.16.0",
+    "ink-text-input": "^5.0.1",
+    "ink-spinner": "^5.0.0",
+    "ink-box": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.47",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.3.3"
+  }
+}
+

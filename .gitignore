@@ -1,3 +1,8 @@
+# AZUL specific
+.azul/
+models/*.gguf
+models/*.ggml
+
 # Python
 __pycache__/
 *.py[cod]
@@ -19,13 +24,29 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
-# Virtual environments
-venv/
+MANIFEST
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.env
+.venv
 env/
+venv/
 ENV/
+env.bak/
+venv.bak/
 azul_env/
-.venv/
+
+# Poetry
+poetry.lock
+
+# Node/Bun
+node_modules/
+dist/
+*.log
+.DS_Store
+bun.lockb
 
 # IDE
 .vscode/
@@ -37,17 +58,3 @@ azul_env/
 # OS
 .DS_Store
 Thumbs.db
-
-# AZUL specific
-.azul/
-*.gguf
-*.ggml
-models/
-
-# Sessions
-sessions/
-*.session
-
-# Logs
-*.log
-

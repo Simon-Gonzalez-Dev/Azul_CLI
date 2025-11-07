@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "azul-core"
+version = "0.1.0"
+description = "AZUL - Local AI Coding Assistant Backend"
+authors = ["AZUL Team"]
+readme = "README.md"
+packages = [{include = "azul_core", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+websockets = "^12.0"
+llama-cpp-python = "^0.2.0"
+langchain = "^0.1.0"
+langchain-core = "^0.1.0"
+langgraph = "^0.0.20"
+langchain-community = "^0.0.20"
+pydantic = "^2.0"
+pydantic-settings = "^2.0"
+
+[tool.poetry.scripts]
+azul-server = "azul_core.server:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
