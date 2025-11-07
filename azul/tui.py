@@ -192,6 +192,29 @@ class AzulTUI:
             if self.live:
                 self.live.update(self._generate_panel())
     
+    def request_permission(self, operation: str, details: str) -> bool:
+        """Request permission from user for destructive operations."""
+        # Stop live display temporarily for input
+        if self.live:
+            self.live.stop()
+        
+        try:
+            self.console.print(f"\n[yellow]⚠️  Permission Request[/yellow]")
+            self.console.print(f"[yellow]Operation:[/yellow] {operation}")
+            self.console.print(f"[yellow]Details:[/yellow] {details}")
+            
+            while True:
+                response = input("\nAllow this operation? (y/n): ").strip().lower()
+                if response in ['y', 'yes']:
+                    return True
+                elif response in ['n', 'no']:
+                    return False
+                else:
+                    self.console.print("[red]Please enter 'y' for yes or 'n' for no[/red]")
+        finally:
+            if self.live:
+                self.live.start()
+    
     def get_user_input(self, prompt: str = "> User: ") -> str:
         """Get user input."""
         # Stop live display temporarily for input

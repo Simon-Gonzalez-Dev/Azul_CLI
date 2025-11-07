@@ -2,7 +2,30 @@
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
+
+
+# Global permission callback - set by agent
+_permission_callback: Optional[Callable[[str, str], bool]] = None
+
+
+def set_permission_callback(callback: Callable[[str, str], bool]) -> None:
+    """Set the permission callback function."""
+    global _permission_callback
+    _permission_callback = callback
+
+
+def get_current_path_tool() -> str:
+    """
+    Returns the absolute path of the current working directory.
+    
+    Returns:
+        Absolute path of current working directory, or error message
+    """
+    try:
+        return os.getcwd()
+    except Exception as e:
+        return f"Error getting current path: {str(e)}"
 
 
 def list_directory_tool(directory_path: str = ".") -> str:
@@ -82,6 +105,7 @@ def read_file_tool(file_path: str) -> str:
 def write_file_nano_tool(file_path: str, new_content: str) -> str:
     """
     Create or overwrite a file with new content.
+    Requires user permission for destructive operations.
     
     Args:
         file_path: Path to the file to create/overwrite
@@ -92,6 +116,13 @@ def write_file_nano_tool(file_path: str, new_content: str) -> str:
     """
     try:
         path = Path(file_path).resolve()
+        
+        # Check if file exists (destructive operation)
+        if path.exists() and path.is_file():
+            # Request permission
+            if _permission_callback:
+                if not _permission_callback("write_file", f"Overwrite existing file: {file_path}"):
+                    return f"Permission denied: User declined to overwrite {file_path}"
         
         # Ensure directory exists
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -111,6 +142,7 @@ def write_file_nano_tool(file_path: str, new_content: str) -> str:
 def delete_file_tool(file_path: str) -> str:
     """
     Delete a file from the filesystem.
+    Requires user permission.
     
     Args:
         file_path: Path to the file to delete
@@ -126,6 +158,11 @@ def delete_file_tool(file_path: str) -> str:
         
         if not path.is_file():
             return f"Error: Path is not a file: {file_path}"
+        
+        # Request permission for destructive operation
+        if _permission_callback:
+            if not _permission_callback("delete_file", f"Delete file: {file_path}"):
+                return f"Permission denied: User declined to delete {file_path}"
         
         path.unlink()
         return f"Successfully deleted {file_path}"

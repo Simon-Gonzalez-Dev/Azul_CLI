@@ -51,6 +51,7 @@ def main():
                 "tool_call": tui.on_tool_call,
                 "observation": tui.on_observation,
                 "start_generation": tui.start_generation,
+                "permission_request": tui.request_permission,
             }
         )
         
