@@ -5,6 +5,50 @@ from pathlib import Path
 from typing import Optional
 
 
+def list_directory_tool(directory_path: str = ".") -> str:
+    """
+    List the contents of a directory.
+    
+    Args:
+        directory_path: Path to the directory to list (default: current directory)
+        
+    Returns:
+        Directory listing as formatted string, or error message
+    """
+    try:
+        path = Path(directory_path).resolve()
+        
+        if not path.exists():
+            return f"Error: Directory not found: {directory_path}"
+        
+        if not path.is_dir():
+            return f"Error: Path is not a directory: {directory_path}"
+        
+        items = []
+        dirs = []
+        files = []
+        
+        for item in sorted(path.iterdir()):
+            if item.is_dir():
+                dirs.append(f"{item.name}/")
+            else:
+                files.append(item.name)
+        
+        items = dirs + files
+        
+        if not items:
+            return f"Directory {directory_path} is empty."
+        
+        result = f"Contents of {directory_path}:\n"
+        result += "\n".join(f"  {item}" for item in items)
+        return result
+    
+    except PermissionError:
+        return f"Error: Permission denied reading directory: {directory_path}"
+    except Exception as e:
+        return f"Error listing directory {directory_path}: {str(e)}"
+
+
 def read_file_tool(file_path: str) -> str:
     """
     Read a file from the filesystem.

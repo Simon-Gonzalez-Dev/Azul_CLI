@@ -12,6 +12,7 @@ from langchain_core.tools import Tool
 from azul.llama_client import LlamaClient
 from azul.tools import (
     delete_file_tool,
+    list_directory_tool,
     read_file_tool,
     respond_to_user_tool,
     write_file_nano_tool,
@@ -106,16 +107,24 @@ class AzulAgent:
     SYSTEM_PROMPT = """You are AZUL, an autonomous AI coding assistant that operates within a CLI.
 
 AVAILABLE TOOLS:
-1. read_file(file_path: str) -> str - Read a file from the filesystem
-2. write_file_nano(file_path: str, new_content: str) -> str - Create or overwrite a file
-3. delete_file(file_path: str) -> str - Delete a file from the filesystem
-4. respond_to_user(message: str) -> str - Signal completion and respond to the user
+1. list_directory(directory_path: str) -> str - List files and subdirectories in a directory (default: current directory). Use this to see directory contents, NOT read_file().
+2. read_file(file_path: str) -> str - Read a file from the filesystem. Only works on files, not directories.
+3. write_file_nano(file_path: str, new_content: str) -> str - Create or overwrite a file
+4. delete_file(file_path: str) -> str - Delete a file from the filesystem
+5. respond_to_user(message: str) -> str - Signal completion and respond to the user
+
+IMPORTANT:
+- Use list_directory() to see what's in a directory, NOT read_file()
+- read_file() only works on files, not directories
+- If a tool returns an error, analyze the error and try a different approach
+- Always acknowledge when a tool fails and explain what went wrong
 
 WORKFLOW:
 1. THINK: Analyze the user's request
 2. PLAN: List the sequence of tool calls needed
 3. ACT: Execute tools one by one
-4. RESPOND: Use respond_to_user() when complete
+4. OBSERVE: Check tool results - if there's an error, reconsider your approach
+5. RESPOND: Use respond_to_user() when complete
 
 Always use respond_to_user() when you have completed the task."""
     
@@ -140,9 +149,14 @@ Always use respond_to_user() when you have completed the task."""
         # Create tools
         self.tools = [
             Tool(
+                name="list_directory",
+                func=list_directory_tool,
+                description="List files and subdirectories in a directory. Use this to see directory contents, not read_file(). Defaults to current directory if no path provided."
+            ),
+            Tool(
                 name="read_file",
                 func=read_file_tool,
-                description="Read a file from the filesystem. Returns file content or error message."
+                description="Read a file from the filesystem. Returns file content or error message. Only works on files, not directories."
             ),
             Tool(
                 name="write_file_nano",
@@ -172,6 +186,7 @@ Always use respond_to_user() when you have completed the task."""
     def _execute_tool(self, tool_name: str, args: List[str]) -> str:
         """Execute a tool by name."""
         tool_map = {
+            "list_directory": list_directory_tool,
             "read_file": read_file_tool,
             "write_file_nano": write_file_nano_tool,
             "delete_file": delete_file_tool,
@@ -251,7 +266,7 @@ Always use respond_to_user() when you have completed the task."""
                 pass  # Don't crash on callback errors
     
     def execute(self, user_input: str) -> str:
-        """Execute the agent with user input using ReAct pattern."""
+        """Execute the agent with user input using ReAct pattern with streaming."""
         try:
             # Trigger thinking callback
             self._trigger_callback("thinking", f"Analyzing request: {user_input}")
@@ -300,14 +315,35 @@ Think step by step. Use tools when needed. When done, use respond_to_user(messag
 
 Your response:"""
                 
-                # Get model response
-                response = self.llama_client.chat(
-                    user_message=prompt,
-                    conversation_history=[],
-                    system_prompt=self.SYSTEM_PROMPT,
-                    max_tokens=2048,
-                    temperature=0.7
-                )
+                # Check if we have streaming callback
+                has_streaming = "thinking_stream" in self.callbacks
+                
+                if has_streaming:
+                    # Stream response
+                    if "start_generation" in self.callbacks:
+                        self.callbacks["start_generation"]()
+                    
+                    full_response = ""
+                    for token in self.llama_client.stream_chat(
+                        user_message=prompt,
+                        conversation_history=[],
+                        system_prompt=self.SYSTEM_PROMPT,
+                        max_tokens=2048,
+                        temperature=0.7
+                    ):
+                        full_response += token
+                        self._trigger_callback("thinking_stream", token)
+                    
+                    response = full_response
+                else:
+                    # Non-streaming fallback
+                    response = self.llama_client.chat(
+                        user_message=prompt,
+                        conversation_history=[],
+                        system_prompt=self.SYSTEM_PROMPT,
+                        max_tokens=2048,
+                        temperature=0.7
+                    )
                 
                 # Parse response for tool calls
                 tool_calls = self._parse_tool_calls(response)
@@ -328,12 +364,20 @@ Your response:"""
                         # Trigger observation callback
                         self._trigger_callback("observation", result)
                         
-                        # Check if it's respond_to_user
-                        if tool_name == "respond_to_user" and "RESPOND:" in result:
-                            return result.split("RESPOND:", 1)[1].strip()
-                        
-                        # Add observation
-                        observations.append(f"{tool_name} result: {result}")
+                        # Check for errors in tool result
+                        if result.startswith("Error:"):
+                            # Add error to observations with emphasis
+                            observations.append(f"ERROR from {tool_name}: {result}")
+                            # Don't continue if it's respond_to_user (shouldn't error, but handle gracefully)
+                            if tool_name == "respond_to_user":
+                                return f"Error: {result}"
+                        else:
+                            # Check if it's respond_to_user
+                            if tool_name == "respond_to_user" and "RESPOND:" in result:
+                                return result.split("RESPOND:", 1)[1].strip()
+                            
+                            # Add successful observation
+                            observations.append(f"{tool_name} result: {result}")
                 
                 # Check if response contains final answer
                 if "RESPOND:" in response:
@@ -358,6 +402,8 @@ Your response:"""
             # Max iterations reached
             return "Task completed (max iterations reached)."
         
+        except KeyboardInterrupt:
+            raise  # Re-raise to be handled by CLI
         except Exception as e:
             return f"Error: {str(e)}"
 

@@ -23,14 +23,28 @@ class LlamaClient:
     def model(self) -> Llama:
         """Lazy load the model."""
         if self._model is None:
-            self._model = Llama(
-                model_path=str(self.model_path),
-                n_ctx=self.n_ctx,
-                n_gpu_layers=self.n_gpu_layers,
-                n_batch=512,
-                use_mmap=True,
-                verbose=False
-            )
+            # Suppress llama.cpp verbose output
+            import os
+            import sys
+            from io import StringIO
+            
+            # Redirect stderr temporarily to suppress verbose output
+            old_stderr = sys.stderr
+            sys.stderr = StringIO()
+            
+            try:
+                self._model = Llama(
+                    model_path=str(self.model_path),
+                    n_ctx=self.n_ctx,
+                    n_gpu_layers=self.n_gpu_layers,
+                    n_batch=512,
+                    use_mmap=True,
+                    verbose=False,
+                    logits_all=False
+                )
+            finally:
+                sys.stderr = old_stderr
+        
         return self._model
     
     def _format_qwen_messages(
