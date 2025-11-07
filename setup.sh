@@ -76,12 +76,12 @@ echo ""
 echo "Step 2: Setting up Python environment..."
 source azul_env/bin/activate
 
-print_info "Upgrading pip3, setuptools, and wheel..."
-pip3 install --upgrade pip3 setuptools wheel || {
-    print_error "Failed to upgrade pip3"
+print_info "Upgrading pip, setuptools, and wheel..."
+pip install --upgrade pip setuptools wheel || {
+    print_error "Failed to upgrade pip"
     exit 1
 }
-print_status "pip3 upgraded"
+print_status "pip upgraded"
 
 # Step 3: Install Python dependencies
 echo ""
@@ -91,43 +91,43 @@ print_info "Installing core dependencies..."
 
 # Install dependencies with error checking
 echo "  → Installing websockets..."
-pip3 install "websockets>=12.0" || {
+pip install "websockets>=12.0" || {
     print_error "Failed to install websockets"
     exit 1
 }
 
 echo "  → Installing langchain..."
-pip3 install "langchain>=0.1.0" || {
+pip install "langchain>=0.1.0" || {
     print_error "Failed to install langchain"
     exit 1
 }
 
 echo "  → Installing langchain-core..."
-pip3 install "langchain-core>=0.1.0" || {
+pip install "langchain-core>=0.1.0" || {
     print_error "Failed to install langchain-core"
     exit 1
 }
 
 echo "  → Installing langgraph..."
-pip3 install "langgraph>=0.0.20" || {
+pip install "langgraph>=0.0.20" || {
     print_error "Failed to install langgraph"
     exit 1
 }
 
 echo "  → Installing langchain-community..."
-pip3 install "langchain-community>=0.0.20" || {
+pip install "langchain-community>=0.0.20" || {
     print_error "Failed to install langchain-community"
     exit 1
 }
 
 echo "  → Installing pydantic..."
-pip3 install "pydantic>=2.0" || {
+pip install "pydantic>=2.0" || {
     print_error "Failed to install pydantic"
     exit 1
 }
 
 echo "  → Installing pydantic-settings..."
-pip3 install "pydantic-settings>=2.0" || {
+pip install "pydantic-settings>=2.0" || {
     print_error "Failed to install pydantic-settings"
     exit 1
 }
@@ -154,16 +154,16 @@ fi
 
 echo "  → Installing llama-cpp-python (this may take 5-10 minutes)..."
 if [ -n "$CMAKE_ARGS" ]; then
-    CMAKE_ARGS="$CMAKE_ARGS" pip3 install llama-cpp-python || {
+    CMAKE_ARGS="$CMAKE_ARGS" pip install llama-cpp-python || {
         print_error "Failed to install llama-cpp-python with GPU support. Trying CPU-only build..."
-        pip3 install llama-cpp-python || {
+        pip install llama-cpp-python || {
             print_error "Failed to install llama-cpp-python"
             print_info "You may need to install build tools: xcode-select --install"
             exit 1
         }
     }
 else
-    pip3 install llama-cpp-python || {
+    pip install llama-cpp-python || {
         print_error "Failed to install llama-cpp-python"
         print_info "You may need to install build tools: xcode-select --install"
         exit 1
@@ -289,9 +289,21 @@ cat > azul_launcher.sh << 'LAUNCHER_EOF'
 # Get the directory where AZUL is installed
 AZUL_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
-# Run azul.py from the AZUL directory
+# Use the virtual environment's Python
+VENV_PYTHON="$AZUL_DIR/azul_env/bin/python"
+
+# Run azul.py from the AZUL directory using venv Python
 cd "$AZUL_DIR"
-python3 azul.py "$@"
+
+# Check if venv exists
+if [ ! -f "$VENV_PYTHON" ]; then
+    echo "Error: Virtual environment not found at $AZUL_DIR/azul_env"
+    echo "Please run: cd $AZUL_DIR && ./setup.sh"
+    exit 1
+fi
+
+# Execute azul.py with the venv Python
+exec "$VENV_PYTHON" azul.py "$@"
 LAUNCHER_EOF
 
 chmod +x azul_launcher.sh
