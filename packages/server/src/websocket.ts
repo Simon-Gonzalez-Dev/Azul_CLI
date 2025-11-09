@@ -17,7 +17,7 @@ export class WebSocketManager {
 
   private setupConnectionHandling(): void {
     this.wss.on("connection", (ws: WebSocket) => {
-      console.log("🔌 New WebSocket connection established");
+      
 
       // Create a new agent for this connection
       const agent = new Agent((message: WebSocketMessage) => {
@@ -46,7 +46,7 @@ export class WebSocketManager {
       });
 
       ws.on("close", () => {
-        console.log("🔌 WebSocket connection closed");
+        console.log(" WebSocket connection closed");
         this.agents.delete(ws);
       });
 

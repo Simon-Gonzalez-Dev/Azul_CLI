@@ -7,7 +7,7 @@ export function renderUI(port: number = 3737): void {
   const ws = new WebSocket(`ws://localhost:${port}`);
 
   ws.on("open", () => {
-    console.log("Connected to server");
+    
   });
 
   ws.on("error", (error) => {
