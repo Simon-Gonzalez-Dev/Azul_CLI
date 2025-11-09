@@ -42,8 +42,8 @@ export class LLMService {
   }
 
   async initialize(modelPath: string): Promise<void> {
-    console.log("🔧 Initializing LLM...");
-    console.log(`📁 Loading model from: ${modelPath}`);
+    console.log("  Initializing LLM...");
+    console.log(`  Loading model from: ${modelPath}`);
 
     const llama = await getLlama();
     
@@ -59,7 +59,7 @@ export class LLMService {
       contextSequence: this.context.getSequence(),
     });
 
-    console.log("✅ LLM initialized successfully");
+    
   }
 
   async getCompletion(

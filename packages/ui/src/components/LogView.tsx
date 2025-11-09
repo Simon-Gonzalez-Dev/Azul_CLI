@@ -29,13 +29,6 @@ export const LogView: React.FC<LogViewProps> = ({ messages }) => {
           </Box>
         );
 
-      case "agent_thinking":
-        return (
-          <Box key={index} marginY={0}>
-            <Text color="yellow">🤔 {message.content}</Text>
-          </Box>
-        );
-
       case "agent_thought":
         return (
           <Box key={index} marginY={0} flexDirection="column">
@@ -50,7 +43,7 @@ export const LogView: React.FC<LogViewProps> = ({ messages }) => {
         return (
           <Box key={index} marginY={0}>
             <Text color="blue">
-              🔧 Calling tool: {message.tool} with args{" "}
+             Calling tool: {message.tool} with args{" "}
               {JSON.stringify(message.args)}
             </Text>
           </Box>
@@ -59,7 +52,7 @@ export const LogView: React.FC<LogViewProps> = ({ messages }) => {
       case "tool_result":
         return (
           <Box key={index} marginY={0} flexDirection="column">
-            <Text color="blue">📋 Tool result from {message.tool}:</Text>
+           
             <Text dimColor>{JSON.stringify(message.result, null, 2)}</Text>
           </Box>
         );
@@ -87,7 +80,7 @@ export const LogView: React.FC<LogViewProps> = ({ messages }) => {
       case "error":
         return (
           <Box key={index} marginY={0}>
-            <Text color="red">❌ Error: {message.message}</Text>
+            <Text color="red"> Error: {message.message}</Text>
           </Box>
         );
 

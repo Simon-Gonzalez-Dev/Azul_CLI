@@ -10,18 +10,17 @@ import { Config } from "./types.js";
 import { renderUI } from "../../ui/dist/main.js";
 
 const BANNER = `
-╔═══════════════════════════════════════╗
-║                                       ║
-║      █████╗ ███████╗██╗   ██╗██╗     ║
-║     ██╔══██╗╚══███╔╝██║   ██║██║     ║
-║     ███████║  ███╔╝ ██║   ██║██║     ║
-║     ██╔══██║ ███╔╝  ██║   ██║██║     ║
-║     ██║  ██║███████╗╚██████╔╝███████╗║
-║     ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚══════╝║
-║                                       ║
-║   AI Coding Assistant - Local Mode   ║
-║                                       ║
-╚═══════════════════════════════════════╝
+  
+    █████╗   ███████╗   ██╗   ██╗   ██╗       
+   ██╔══██╗   ╚════██╗  ██║   ██║   ██║      
+  ███████║    █████╔╝   ██║   ██║   ██║       
+ ██╔══██║    ██╔═══╝    ██║   ██║   ██║       
+██║  ██║     ███████╗   ╚██████╔╝   ███████╗  
+╚═╝  ╚═╝     ╚══════╝    ╚═════╝    ╚══════╝ 
+
+║   AI Coding Assistant - Local Mode  ║
+
+
 `;
 
 async function loadConfig(): Promise<Config> {
@@ -47,7 +46,7 @@ async function main() {
 
   // Load configuration
   const config = await loadConfig();
-  console.log(`📋 Configuration loaded`);
+  console.log(`   Configuration loaded`);
   console.log(`   Model: ${config.modelPath}`);
   console.log(`   Port: ${config.port}`);
   console.log(`   Context Size: ${config.contextSize}\n`);
@@ -59,7 +58,7 @@ async function main() {
   try {
     await llm.initialize(modelPath);
   } catch (error) {
-    console.error("❌ Failed to initialize LLM:", error);
+    console.error(" Failed to initialize LLM:", error);
     console.error("\nMake sure the model file exists at:", modelPath);
     process.exit(1);
   }
@@ -70,7 +69,7 @@ async function main() {
 
   // Initialize WebSocket
   const wsManager = new WebSocketManager(server, llm);
-  console.log("🔌 WebSocket server initialized\n");
+  console.log(" WebSocket server initialized\n");
 
   // Health check endpoint
   app.get("/health", (req, res) => {
@@ -79,7 +78,7 @@ async function main() {
 
   // Start server
   server.listen(config.port, () => {
-    console.log(`🚀 Server running on port ${config.port}\n`);
+    console.log(` Server running on port ${config.port}\n`);
     console.log("Starting UI...\n");
     
     // Wait a bit for server to be fully ready
