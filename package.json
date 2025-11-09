@@ -1,0 +1,23 @@
+{
+  "name": "azul",
+  "version": "1.0.0",
+  "description": "A locally-run AI coding assistant with terminal UI",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -ws",
+    "dev": "npm run build && node packages/server/dist/main.js",
+    "clean": "rm -rf packages/*/dist"
+  },
+  "keywords": [
+    "ai",
+    "coding-assistant",
+    "llm",
+    "terminal"
+  ],
+  "author": "",
+  "license": "MIT"
+}
+
