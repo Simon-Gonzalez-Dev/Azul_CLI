@@ -57,27 +57,53 @@ export const App: React.FC<AppProps> = ({ ws }) => {
 
   const handleServerMessage = (message: any) => {
     if (message.type === "approval_request") {
-      setState((prev) => ({
-        ...prev,
-        pendingApproval: {
-          requestId: message.requestId,
-          tool: message.tool,
-          args: message.args,
-        },
-      }));
+      setState((prev) => {
+        // Only set new approval if there isn't already one pending
+        // This prevents race conditions where multiple approvals come in sequence
+        if (prev.pendingApproval) {
+          console.warn(`Received new approval request (${message.requestId}) while one is already pending (${prev.pendingApproval.requestId}). Ignoring.`);
+          return prev;
+        }
+        return {
+          ...prev,
+          pendingApproval: {
+            requestId: message.requestId,
+            tool: message.tool,
+            args: message.args,
+          },
+        };
+      });
     } else if (message.type === "token_stats") {
       setState((prev) => ({
         ...prev,
         tokenStats: message.stats,
       }));
     } else {
-      setState((prev) => ({
-        ...prev,
-        messages: [
-          ...prev.messages,
-          { ...message, timestamp: Date.now() },
-        ],
-      }));
+      // If we receive a tool_result or tool_call, clear any pending approval
+      // This handles cases where the backend processes the approval before we clear it
+      if (message.type === "tool_result" || message.type === "tool_call") {
+        setState((prev) => {
+          if (prev.pendingApproval) {
+            console.log(`Clearing pending approval (${prev.pendingApproval.requestId}) due to ${message.type}`);
+          }
+          return {
+            ...prev,
+            pendingApproval: null,
+            messages: [
+              ...prev.messages,
+              { ...message, timestamp: Date.now() },
+            ],
+          };
+        });
+      } else {
+        setState((prev) => ({
+          ...prev,
+          messages: [
+            ...prev.messages,
+            { ...message, timestamp: Date.now() },
+          ],
+        }));
+      }
     }
   };
 
@@ -100,16 +126,22 @@ export const App: React.FC<AppProps> = ({ ws }) => {
   };
 
   const handleApproval = (approved: boolean) => {
-    if (!state.pendingApproval) return;
+    if (!state.pendingApproval) {
+      console.warn("Attempted to approve but no pending approval exists");
+      return;
+    }
 
+    const requestId = state.pendingApproval.requestId;
+    
     ws.send(
       JSON.stringify({
         type: "approval",
-        requestId: state.pendingApproval.requestId,
+        requestId: requestId,
         approved,
       })
     );
 
+    // Clear pending approval immediately after sending
     setState((prev) => ({ ...prev, pendingApproval: null }));
   };
 

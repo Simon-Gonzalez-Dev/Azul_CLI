@@ -270,8 +270,24 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
     const requestId = Math.random().toString(36).substring(7);
     
     return new Promise((resolve) => {
-      this.pendingApprovals.set(requestId, { resolve });
+      // Store the resolve function and timeout
+      let timeoutId: NodeJS.Timeout | null = null;
       
+      const cleanup = () => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        this.pendingApprovals.delete(requestId);
+      };
+
+      const wrappedResolve = (approved: boolean) => {
+        cleanup();
+        resolve(approved);
+      };
+
+      this.pendingApprovals.set(requestId, { resolve: wrappedResolve });
+      
+      console.log(`Requesting approval for tool: ${toolName}, requestId: ${requestId}`);
       this.sendMessage({
         type: "approval_request",
         requestId,
@@ -280,9 +296,9 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
       });
 
       // Set a timeout for approval
-      setTimeout(() => {
+      timeoutId = setTimeout(() => {
         if (this.pendingApprovals.has(requestId)) {
-          this.pendingApprovals.delete(requestId);
+          cleanup();
           resolve(false);
         }
       }, 60000); // 60 second timeout
@@ -292,8 +308,11 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
   handleApproval(requestId: string, approved: boolean): void {
     const pending = this.pendingApprovals.get(requestId);
     if (pending) {
+      console.log(`Processing approval for requestId: ${requestId}, approved: ${approved}`);
+      // The resolve function will handle cleanup
       pending.resolve(approved);
-      this.pendingApprovals.delete(requestId);
+    } else {
+      console.warn(`Received approval for unknown requestId: ${requestId}. Current pending approvals:`, Array.from(this.pendingApprovals.keys()));
     }
   }
 }
