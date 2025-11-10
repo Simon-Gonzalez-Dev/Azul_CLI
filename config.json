@@ -1,7 +1,14 @@
 {
   "modelPath": "./models/qwen2.5-coder-7b-instruct-q4_k_m.gguf",
-  "port": 3737,
   "contextSize": 8192,
-  "maxTokens": 2048
+  "maxTokens": 16384,
+  "gpuLayers": 999,
+  "threads": 10,
+  "flashAttention": true,
+  "batchSize": 512,
+  "memoryLock": true,
+  "temperature": 0.85,
+  "topP": 0.95,
+  "topK": 40
 }
 

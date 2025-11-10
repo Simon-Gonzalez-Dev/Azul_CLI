@@ -20,16 +20,22 @@ export interface ToolCall {
   arguments: any;
 }
 
-export interface WebSocketMessage {
-  type: string;
-  [key: string]: any;
+export interface MessageCallback {
+  (message: { type: string; [key: string]: any }): void;
 }
 
 export interface Config {
   modelPath: string;
-  port: number;
   contextSize: number;
   maxTokens: number;
+  gpuLayers: number;
+  threads: number;
+  flashAttention: boolean;
+  batchSize: number;
+  memoryLock: boolean;
+  temperature: number;
+  topP: number;
+  topK: number;
 }
 
 export interface TokenStats {

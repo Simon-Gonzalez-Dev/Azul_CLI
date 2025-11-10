@@ -1,26 +1,24 @@
 #!/usr/bin/env node
 
-import express from "express";
-import http from "http";
 import * as path from "path";
 import * as fs from "fs/promises";
-import { WebSocketManager } from "./websocket.js";
 import { LLMService } from "./llm.js";
+import { Agent } from "./agent.js";
 import { Config } from "./types.js";
-import { renderUI } from "../../ui/dist/main.js";
 
 const BANNER = `
-  
-    █████╗   ███████╗   ██╗   ██╗   ██╗       
-   ██╔══██╗   ╚════██╗  ██║   ██║   ██║      
-  ███████║    █████╔╝   ██║   ██║   ██║       
- ██╔══██║    ██╔═══╝    ██║   ██║   ██║       
-██║  ██║     ███████╗   ╚██████╔╝   ███████╗  
-╚═╝  ╚═╝     ╚══════╝    ╚═════╝    ╚══════╝ 
-
-║   AI Coding Assistant - Local Mode  ║
-
-
+╔═══════════════════════════════════════╗
+║                                       ║
+║      █████╗ ███████╗██╗   ██╗██╗     ║
+║     ██╔══██╗╚══███╔╝██║   ██║██║     ║
+║     ███████║  ███╔╝ ██║   ██║██║     ║
+║     ██╔══██║ ███╔╝  ██║   ██║██║     ║
+║     ██║  ██║███████╗╚██████╔╝███████╗║
+║     ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚══════╝║
+║                                       ║
+║   AI Coding Assistant - Local Mode   ║
+║                                       ║
+╚═══════════════════════════════════════╝
 `;
 
 async function loadConfig(): Promise<Config> {
@@ -32,82 +30,94 @@ async function loadConfig(): Promise<Config> {
     console.error("Failed to load config.json, using defaults");
     return {
       modelPath: "./models/qwen2.5-coder-7b-instruct-q4_k_m.gguf",
-      port: 3737,
-      contextSize: 8192,
-      maxTokens: 2048,
+      contextSize: 32768,
+      maxTokens: 16384,
+      gpuLayers: 999,
+      threads: 10,
+      flashAttention: true,
+      batchSize: 512,
+      memoryLock: true,
+      temperature: 0.85,
+      topP: 0.95,
+      topK: 40,
     };
   }
 }
+
+// Global agent instance for UI access
+export let globalAgent: Agent | null = null;
 
 async function main() {
   console.clear();
   console.log(BANNER);
   console.log("Starting Azul...\n");
 
-  // Load configuration
   const config = await loadConfig();
-  console.log(`   Configuration loaded`);
+  console.log(`📋 Configuration loaded`);
   console.log(`   Model: ${config.modelPath}`);
-  console.log(`   Port: ${config.port}`);
-  console.log(`   Context Size: ${config.contextSize}\n`);
+  console.log(`   Context Size: ${config.contextSize.toLocaleString()} tokens`);
+  console.log(`   Max Output: ${config.maxTokens.toLocaleString()} tokens`);
+  console.log(`   GPU Layers: ${config.gpuLayers === 999 ? 'all' : config.gpuLayers}`);
+  console.log(`   Threads: ${config.threads}`);
+  console.log(`   Flash Attention: ${config.flashAttention ? 'enabled' : 'disabled'}\n`);
 
   // Initialize LLM
-  const llm = new LLMService(config.contextSize, config.maxTokens);
+  const llm = new LLMService(config);
   const modelPath = path.resolve(process.cwd(), config.modelPath);
   
   try {
     await llm.initialize(modelPath);
   } catch (error) {
-    console.error(" Failed to initialize LLM:", error);
+    console.error("❌ Failed to initialize LLM:", error);
     console.error("\nMake sure the model file exists at:", modelPath);
     process.exit(1);
   }
 
-  // Create Express app
-  const app = express();
-  const server = http.createServer(app);
+  // Create message handler that will be passed to UI
+  let messageHandler: ((message: any) => void) | null = null;
 
-  // Initialize WebSocket
-  const wsManager = new WebSocketManager(server, llm);
-  console.log(" WebSocket server initialized\n");
+  // Create agent with direct message callback
+  const agent = new Agent((message) => {
+    // Forward messages to UI handler
+    if (messageHandler) {
+      messageHandler(message);
+    }
+  }, llm);
 
-  // Health check endpoint
-  app.get("/health", (req, res) => {
-    res.json({ status: "ok" });
-  });
+  // Store agent globally
+  globalAgent = agent;
 
-  // Start server
-  server.listen(config.port, () => {
-    console.log(` Server running on port ${config.port}\n`);
-    console.log("Starting UI...\n");
-    
-    // Wait a bit for server to be fully ready
-    setTimeout(() => {
-      // Render the Ink UI
-      renderUI(config.port);
-    }, 500);
+  console.log("✅ Azul ready!\n");
+  console.log("Starting UI...\n");
+
+  // Dynamically import UI at runtime
+  const uiPath = path.resolve(process.cwd(), "packages/ui/dist/main.js");
+  const { renderUI } = await import(uiPath);
+  
+  // Render UI - pass agent and message handler setter
+  renderUI(agent, (handler: (message: any) => void) => {
+    messageHandler = handler;
+    // Send initial connection message
+    handler({
+      type: "connected",
+      message: "Connected to Azul",
+      timestamp: Date.now(),
+    });
   });
 
   // Graceful shutdown
   const shutdown = async () => {
     console.log("\n\n🛑 Shutting down...");
-    wsManager.close();
     await llm.cleanup();
-    server.close(() => {
-      console.log("👋 Goodbye!");
-      process.exit(0);
-    });
+    console.log("👋 Goodbye!");
+    process.exit(0);
   };
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 }
 
-// Export the llm instance for use by agents
-export let globalLLM: LLMService;
-
 main().catch((error) => {
   console.error("Fatal error:", error);
   process.exit(1);
 });
-

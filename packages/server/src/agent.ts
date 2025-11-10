@@ -1,40 +1,68 @@
 import { LLMService } from "./llm.js";
-import { ChatMessage, ToolCall, WebSocketMessage, ToolDefinition } from "./types.js";
+import { ChatMessage, ToolCall, MessageCallback, ToolDefinition } from "./types.js";
 import { tools, getToolByName } from "./tools/index.js";
 
 export class Agent {
   private llm: LLMService;
   private conversationHistory: ChatMessage[] = [];
-  private sendMessage: (message: WebSocketMessage) => void;
+  private sendMessage: MessageCallback;
   private pendingApprovals: Map<string, { resolve: (approved: boolean) => void }> = new Map();
   private maxLoopIterations: number = 10;
   private currentLoopCount: number = 0;
 
-  constructor(sendMessage: (message: WebSocketMessage) => void, llm: LLMService) {
+  constructor(sendMessage: MessageCallback, llm: LLMService) {
     this.sendMessage = sendMessage;
     this.llm = llm;
     this.initializeSystemPrompt();
   }
 
   private initializeSystemPrompt(): void {
-    const systemPrompt = `You are Azul, an AI coding assistant running locally. You help users with coding tasks by analyzing files, executing commands, and providing solutions.
+    const systemPrompt = `You are Azul, a world-class AI software engineer and coding assistant running locally. You are an expert programmer with deep knowledge across all programming languages, frameworks, and software engineering best practices.
 
-You have access to tools that let you interact with the filesystem and execute shell commands. Use these tools to help the user effectively.
+Your mission is to not only fulfill user requests but to EXCEED expectations by:
+- Understanding the deeper intent behind requests
+- Proactively adding valuable features, improvements, and polish
+- Creating beautiful, well-designed, production-ready code
+- Thinking like a senior engineer who anticipates needs
+- Going above and beyond to deliver exceptional results
 
-When responding, think step by step:
-1. Understand what the user is asking
-2. Determine which tools (if any) you need to use
-3. Execute the tools
-4. Provide a helpful response
+CORE PRINCIPLES:
+1. **Exceed Expectations**: Don't just do what's asked - add thoughtful enhancements
+2. **Production Quality**: Write code that's clean, maintainable, and follows best practices
+3. **User Experience**: Consider design, usability, and aesthetics in everything you create
+4. **Proactive Problem Solving**: Identify and solve problems before they're mentioned
+5. **Complete Solutions**: Provide full, working implementations, not placeholders
 
-Always be concise and helpful. Format code blocks with proper syntax highlighting.`;
+DESIGN PHILOSOPHY:
+- When creating UIs, add modern, beautiful designs with thoughtful layouts
+- Include helpful features users didn't explicitly ask for but would appreciate
+- Make interfaces intuitive and visually appealing
+- Add proper error handling, loading states, and user feedback
+- Consider accessibility and responsive design
+
+CODE QUALITY:
+- Write complete, production-ready code with proper structure
+- Include comprehensive error handling
+- Add helpful comments where needed
+- Follow language-specific best practices and conventions
+- Optimize for performance and maintainability
+
+You have access to tools that let you interact with the filesystem and execute shell commands. Use these tools effectively to build complete solutions.
+
+When responding:
+1. Understand the user's request and underlying intent
+2. Think about what would make this solution exceptional
+3. Determine which tools you need to use
+4. Execute tools to create complete, polished solutions
+5. Provide thorough, detailed responses
+
+Remember: You're not just a code generator - you're a world-class software engineer creating exceptional software.`;
 
     this.conversationHistory.push({
       role: "system",
       content: systemPrompt,
     });
   }
-
 
   async handleUserMessage(content: string): Promise<void> {
     // Handle reset command
@@ -75,13 +103,11 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
   }
 
   reset(): void {
-    // Keep only the system prompt
     const systemMessage = this.conversationHistory.find(m => m.role === "system");
     this.conversationHistory = systemMessage ? [systemMessage] : [];
     this.llm.resetTokenStats();
     this.currentLoopCount = 0;
     
-    // Cancel any pending approvals
     this.pendingApprovals.forEach((pending) => {
       pending.resolve(false);
     });
@@ -89,7 +115,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
   }
 
   private async runAgentLoop(): Promise<void> {
-    // Prevent infinite loops
     if (this.currentLoopCount >= this.maxLoopIterations) {
       this.sendMessage({
         type: "error",
@@ -105,19 +130,16 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
     this.currentLoopCount++;
 
     try {
-      // Send thinking state
       this.sendMessage({
         type: "agent_thinking",
         content: "Thinking...",
       });
 
-      // Get completion from LLM
       const { response, stats } = await this.llm.getCompletion(
         this.conversationHistory,
         tools
       );
 
-      // Send token statistics
       const totalStats = this.llm.getTokenStats();
       this.sendMessage({
         type: "token_stats",
@@ -129,7 +151,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         },
       });
 
-      // Parse the response
       const parsedResponse = this.parseResponse(response);
 
       if (parsedResponse.thought) {
@@ -139,26 +160,20 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         });
       }
 
-      // If there are tool calls, execute them
       if (parsedResponse.tool_calls && parsedResponse.tool_calls.length > 0) {
         await this.executeToolCalls(parsedResponse.tool_calls);
-        
-        // After executing tools, run the loop again to get final response
         await this.runAgentLoop();
       } else if (parsedResponse.response) {
-        // Send final response
         this.sendMessage({
           type: "agent_response",
           content: parsedResponse.response,
         });
 
-        // Add assistant response to history
         this.conversationHistory.push({
           role: "assistant",
           content: parsedResponse.response,
         });
       } else {
-        // If no response or tool calls, treat the raw response as the answer
         this.sendMessage({
           type: "agent_response",
           content: response,
@@ -183,7 +198,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
     response?: string;
   } {
     try {
-      // Try to find JSON in the response
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
@@ -193,7 +207,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
       // If parsing fails, treat the whole response as a text response
     }
 
-    // If no JSON found or parsing failed, return as plain response
     return { response };
   }
 
@@ -209,14 +222,12 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         continue;
       }
 
-      // Send tool call notification
       this.sendMessage({
         type: "tool_call",
         tool: toolCall.name,
         args: toolCall.arguments,
       });
 
-      // Check if approval is required
       if (tool.requiresApproval) {
         const approved = await this.requestApproval(toolCall.name, toolCall.arguments);
         
@@ -227,7 +238,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
             result: { success: false, error: "User denied approval" },
           });
           
-          // Add to conversation history
           this.conversationHistory.push({
             role: "assistant",
             content: `Tool ${toolCall.name} was denied by the user.`,
@@ -236,7 +246,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         }
       }
 
-      // Execute the tool
       try {
         const result = await tool.execute(toolCall.arguments);
         
@@ -246,7 +255,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
           result,
         });
 
-        // Add to conversation history
         this.conversationHistory.push({
           role: "assistant",
           content: `Executed ${toolCall.name} with result: ${JSON.stringify(result)}`,
@@ -270,7 +278,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
     const requestId = Math.random().toString(36).substring(7);
     
     return new Promise((resolve) => {
-      // Store the resolve function and timeout
       let timeoutId: NodeJS.Timeout | null = null;
       
       const cleanup = () => {
@@ -287,7 +294,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
 
       this.pendingApprovals.set(requestId, { resolve: wrappedResolve });
       
-      console.log(`Requesting approval for tool: ${toolName}, requestId: ${requestId}`);
       this.sendMessage({
         type: "approval_request",
         requestId,
@@ -295,25 +301,21 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         args,
       });
 
-      // Set a timeout for approval
       timeoutId = setTimeout(() => {
         if (this.pendingApprovals.has(requestId)) {
           cleanup();
           resolve(false);
         }
-      }, 60000); // 60 second timeout
+      }, 60000);
     });
   }
 
   handleApproval(requestId: string, approved: boolean): void {
     const pending = this.pendingApprovals.get(requestId);
     if (pending) {
-      console.log(`Processing approval for requestId: ${requestId}, approved: ${approved}`);
-      // The resolve function will handle cleanup
       pending.resolve(approved);
     } else {
-      console.warn(`Received approval for unknown requestId: ${requestId}. Current pending approvals:`, Array.from(this.pendingApprovals.keys()));
+      console.warn(`Received approval for unknown requestId: ${requestId}`);
     }
   }
 }
-
