@@ -36,17 +36,17 @@ export class LLMService {
   }
 
   async initialize(modelPath: string): Promise<void> {
-    console.log("🔧 Initializing LLM with Metal acceleration...");
-    console.log(`📁 Loading model from: ${modelPath}`);
+    console.log("  Initializing LLM with Metal acceleration...");
+    console.log(`  Loading model from: ${modelPath}`);
     
     const isMacOS = process.platform === 'darwin';
     if (isMacOS) {
-      console.log("🍎 macOS detected - Using Metal GPU acceleration");
-      console.log(`⚡ GPU Layers: ${this.config.gpuLayers === 999 ? 'all' : this.config.gpuLayers}`);
-      console.log(`🧵 Threads: ${this.config.threads}`);
-      console.log(`⚡ Flash Attention: ${this.config.flashAttention ? 'enabled' : 'disabled'}`);
+      console.log("  macOS detected - Using Metal GPU acceleration");
+      console.log(`  GPU Layers: ${this.config.gpuLayers === 999 ? 'all' : this.config.gpuLayers}`);
+      console.log(`  Threads: ${this.config.threads}`);
+      console.log(`  Flash Attention: ${this.config.flashAttention ? 'enabled' : 'disabled'}`);
     } else {
-      console.log("💻 Using CPU inference");
+      console.log("  Using CPU inference");
     }
 
     const llama = await getLlama();
@@ -71,7 +71,7 @@ export class LLMService {
       contextSequence: this.context.getSequence(),
     });
 
-    console.log(`✅ LLM initialized successfully`);
+    console.log(`   LLM initialized successfully`);
     console.log(`   Context Size: ${this.config.contextSize.toLocaleString()} tokens`);
     console.log(`   Max Output: ${this.config.maxTokens.toLocaleString()} tokens`);
   }

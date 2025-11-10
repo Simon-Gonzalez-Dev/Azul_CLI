@@ -7,18 +7,14 @@ import { Agent } from "./agent.js";
 import { Config } from "./types.js";
 
 const BANNER = `
-╔═══════════════════════════════════════╗
-║                                       ║
-║      █████╗ ███████╗██╗   ██╗██╗     ║
-║     ██╔══██╗╚══███╔╝██║   ██║██║     ║
-║     ███████║  ███╔╝ ██║   ██║██║     ║
-║     ██╔══██║ ███╔╝  ██║   ██║██║     ║
-║     ██║  ██║███████╗╚██████╔╝███████╗║
-║     ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚══════╝║
-║                                       ║
-║   AI Coding Assistant - Local Mode   ║
-║                                       ║
-╚═══════════════════════════════════════╝
+
+    █████╗   ███████╗   ██╗   ██╗   ██╗       
+   ██╔══██╗   ╚════██╗  ██║   ██║   ██║      
+  ███████║    █████╔╝   ██║   ██║   ██║       
+ ██╔══██║    ██╔═══╝    ██║   ██║   ██║       
+██║  ██║     ███████╗   ╚██████╔╝   ███████╗  
+╚═╝  ╚═╝     ╚══════╝    ╚═════╝    ╚══════╝ 
+
 `;
 
 async function loadConfig(): Promise<Config> {
@@ -30,7 +26,7 @@ async function loadConfig(): Promise<Config> {
     console.error("Failed to load config.json, using defaults");
     return {
       modelPath: "./models/qwen2.5-coder-7b-instruct-q4_k_m.gguf",
-      contextSize: 32768,
+      contextSize: 8192,
       maxTokens: 16384,
       gpuLayers: 999,
       threads: 10,
@@ -53,7 +49,7 @@ async function main() {
   console.log("Starting Azul...\n");
 
   const config = await loadConfig();
-  console.log(`📋 Configuration loaded`);
+  console.log(`   Configuration loaded`);
   console.log(`   Model: ${config.modelPath}`);
   console.log(`   Context Size: ${config.contextSize.toLocaleString()} tokens`);
   console.log(`   Max Output: ${config.maxTokens.toLocaleString()} tokens`);
@@ -68,7 +64,7 @@ async function main() {
   try {
     await llm.initialize(modelPath);
   } catch (error) {
-    console.error("❌ Failed to initialize LLM:", error);
+    console.error("  Failed to initialize LLM:", error);
     console.error("\nMake sure the model file exists at:", modelPath);
     process.exit(1);
   }
@@ -87,7 +83,7 @@ async function main() {
   // Store agent globally
   globalAgent = agent;
 
-  console.log("✅ Azul ready!\n");
+  console.log("  Azul ready!\n");
   console.log("Starting UI...\n");
 
   // Dynamically import UI at runtime
@@ -107,9 +103,8 @@ async function main() {
 
   // Graceful shutdown
   const shutdown = async () => {
-    console.log("\n\n🛑 Shutting down...");
+    console.log("\n\n  Shutting down...");
     await llm.cleanup();
-    console.log("👋 Goodbye!");
     process.exit(0);
   };
 
