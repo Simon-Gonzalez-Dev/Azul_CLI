@@ -25,6 +25,11 @@ export interface TokenStats {
   totalTokens: number;
   tokensPerSecond: number;
   generationTimeMs: number;
+  promptTokens?: number;
+  contextTokens?: number;
+  cumulativeInputTokens?: number;
+  cumulativeOutputTokens?: number;
+  cumulativeTotalTokens?: number;
   totalInputTokens?: number;
   totalOutputTokens?: number;
 }

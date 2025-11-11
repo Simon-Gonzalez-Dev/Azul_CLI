@@ -66,9 +66,18 @@ export const App: React.FC<AppProps> = ({ ws }) => {
         },
       }));
     } else if (message.type === "token_stats") {
+      const timestamp = Date.now();
       setState((prev) => ({
         ...prev,
         tokenStats: message.stats,
+        messages: [
+          ...prev.messages,
+          {
+            type: "token_stats",
+            stats: message.stats,
+            timestamp,
+          },
+        ],
       }));
     } else {
       setState((prev) => ({

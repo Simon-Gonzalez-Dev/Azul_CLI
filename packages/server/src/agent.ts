@@ -4,7 +4,8 @@ import { tools, getToolByName } from "./tools/index.js";
 
 export class Agent {
   private llm: LLMService;
-  private conversationHistory: ChatMessage[] = [];
+  private conversationHistory: ChatMessage[] = []; // Only user and assistant messages
+  private systemPrompt: string = ""; // Base system prompt - never changes
   private sendMessage: (message: WebSocketMessage) => void;
   private pendingApprovals: Map<string, { resolve: (approved: boolean) => void }> = new Map();
   private maxLoopIterations: number = 10;
@@ -17,7 +18,9 @@ export class Agent {
   }
 
   private initializeSystemPrompt(): void {
-    const systemPrompt = `You are Azul, an AI coding assistant running locally. You help users with coding tasks by analyzing files, executing commands, and providing solutions.
+    // This is the foundational instruction that never changes
+    // It's separated from conversation history for efficient KV caching
+    this.systemPrompt = `You are Azul, an AI coding assistant running locally. You help users with coding tasks by analyzing files, executing commands, and providing solutions.
 
 You have access to tools that let you interact with the filesystem and execute shell commands. Use these tools to help the user effectively.
 
@@ -28,11 +31,6 @@ When responding, think step by step:
 4. Provide a helpful response
 
 Always be concise and helpful. Format code blocks with proper syntax highlighting.`;
-
-    this.conversationHistory.push({
-      role: "system",
-      content: systemPrompt,
-    });
   }
 
 
@@ -75,9 +73,9 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
   }
 
   reset(): void {
-    // Keep only the system prompt
-    const systemMessage = this.conversationHistory.find(m => m.role === "system");
-    this.conversationHistory = systemMessage ? [systemMessage] : [];
+    // Clear conversation history only - system prompt remains unchanged
+    // This leverages KV caching: system prompt is cached, only new history is processed
+    this.conversationHistory = [];
     this.llm.resetTokenStats();
     this.currentLoopCount = 0;
     
@@ -112,7 +110,9 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
       });
 
       // Get completion from LLM
+      // Pass system prompt separately from conversation history for efficient KV caching
       const { response, stats } = await this.llm.getCompletion(
+        this.systemPrompt,
         this.conversationHistory,
         tools
       );
@@ -123,9 +123,11 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         type: "token_stats",
         stats: {
           ...stats,
+          cumulativeInputTokens: totalStats.inputTokens,
+          cumulativeOutputTokens: totalStats.outputTokens,
+          cumulativeTotalTokens: totalStats.totalTokens,
           totalInputTokens: totalStats.inputTokens,
           totalOutputTokens: totalStats.outputTokens,
-          totalTokens: totalStats.totalTokens,
         },
       });
 

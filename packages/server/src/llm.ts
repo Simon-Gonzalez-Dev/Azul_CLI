@@ -1,16 +1,6 @@
-import { getLlama, LlamaModel, LlamaContext, LlamaChatSession } from "node-llama-cpp";
+import { getLlama, LlamaModel, LlamaContext, LlamaChatSession, TokenMeter } from "node-llama-cpp";
 import { ChatMessage, ToolDefinition, TokenStats } from "./types.js";
 import * as path from "path";
-
-// Simple token counter - approximates tokens by counting words and characters
-// This is a rough approximation; for accurate counting, you'd need the model's tokenizer
-function estimateTokens(text: string): number {
-  // Rough approximation: ~0.75 tokens per word, or ~4 characters per token
-  const words = text.split(/\s+/).filter(w => w.length > 0).length;
-  const chars = text.length;
-  // Use the average of both methods
-  return Math.ceil((words * 0.75 + chars / 4) / 2);
-}
 
 export class LLMService {
   private model: LlamaModel | null = null;
@@ -63,25 +53,27 @@ export class LLMService {
   }
 
   async getCompletion(
-    messages: ChatMessage[],
+    systemPrompt: string,
+    conversationHistory: ChatMessage[],
     tools?: ToolDefinition[]
   ): Promise<{ response: string; stats: TokenStats }> {
-    if (!this.session) {
+    if (!this.session || !this.model) {
       throw new Error("LLM not initialized. Call initialize() first.");
     }
 
     // Build the system prompt with tool definitions
-    let systemPrompt = messages.find(m => m.role === "system")?.content || "";
+    // System prompt is passed separately and will be cached by KV cache
+    let fullSystemPrompt = systemPrompt;
     
     if (tools && tools.length > 0) {
-      systemPrompt += "\n\nYou have access to the following tools:\n\n";
+      fullSystemPrompt += "\n\nYou have access to the following tools:\n\n";
       tools.forEach(tool => {
-        systemPrompt += `### ${tool.name}\n`;
-        systemPrompt += `Description: ${tool.description}\n`;
-        systemPrompt += `Parameters: ${JSON.stringify(tool.parameters, null, 2)}\n\n`;
+        fullSystemPrompt += `### ${tool.name}\n`;
+        fullSystemPrompt += `Description: ${tool.description}\n`;
+        fullSystemPrompt += `Parameters: ${JSON.stringify(tool.parameters, null, 2)}\n\n`;
       });
       
-      systemPrompt += `\nTo use a tool, respond with a JSON object in this format:
+      fullSystemPrompt += `\nTo use a tool, respond with a JSON object in this format:
 {
   "thought": "Your reasoning about what to do",
   "tool_calls": [
@@ -99,40 +91,53 @@ If you don't need to use any tools, respond with:
 }`;
     }
 
-    // Build full conversation history for token counting
-    let fullPrompt = systemPrompt;
-    let inputTokenCount = estimateTokens(systemPrompt);
+    // Build full prompt: system prompt + conversation history
+    // The KV cache will efficiently handle the repeated system prompt
+    let fullPrompt = fullSystemPrompt;
 
-    // Include all conversation messages
-    for (const msg of messages) {
+    // Include conversation history (only user and assistant messages)
+    for (const msg of conversationHistory) {
       if (msg.role === "user") {
         fullPrompt += `\n\nUser: ${msg.content}`;
-        inputTokenCount += estimateTokens(`User: ${msg.content}`);
       } else if (msg.role === "assistant") {
         fullPrompt += `\n\nAssistant: ${msg.content}`;
-        inputTokenCount += estimateTokens(`Assistant: ${msg.content}`);
       }
     }
 
     fullPrompt += "\n\nAssistant:";
 
-    // Count input tokens
-    this.totalInputTokens += inputTokenCount;
+    // Token metrics
+    const promptTokens = this.model.tokenize(fullPrompt, true).length;
+    const sequence = this.session.sequence;
+    const meterStart = sequence.tokenMeter.getState();
 
     const startTime = Date.now();
+    let streamedOutputTokens = 0;
 
     try {
       const response = await this.session.prompt(fullPrompt, {
         maxTokens: this.maxTokens,
         temperature: 0.7,
+        onToken: (tokens) => {
+          streamedOutputTokens += tokens.length;
+        },
       });
 
       const endTime = Date.now();
       const generationTimeMs = endTime - startTime;
-      const outputTokenCount = estimateTokens(response);
+      const meterEnd = sequence.tokenMeter.getState();
+      const meterDiff = TokenMeter.diff(meterEnd, meterStart);
+
+      const inputTokenCount = meterDiff.usedInputTokens;
+      const outputTokenCount = meterDiff.usedOutputTokens || streamedOutputTokens;
+
+      this.totalInputTokens += inputTokenCount;
       this.totalOutputTokens += outputTokenCount;
 
-      const tokensPerSecond = outputTokenCount / (generationTimeMs / 1000);
+      const tokensPerSecond =
+        outputTokenCount > 0 && generationTimeMs > 0
+          ? outputTokenCount / (generationTimeMs / 1000)
+          : 0;
 
       const stats: TokenStats = {
         inputTokens: inputTokenCount,
@@ -140,6 +145,8 @@ If you don't need to use any tools, respond with:
         totalTokens: inputTokenCount + outputTokenCount,
         tokensPerSecond: tokensPerSecond,
         generationTimeMs: generationTimeMs,
+        promptTokens,
+        contextTokens: sequence.contextTokens.length,
       };
 
       return { response, stats };

@@ -22,7 +22,21 @@ export const StatusBar: React.FC<StatusBarProps> = ({
     return tokens.toString();
   };
 
-  const totalTokens = (tokenStats.totalInputTokens || 0) + (tokenStats.totalOutputTokens || 0);
+  const promptTokens = tokenStats.promptTokens ?? 0;
+  const inputTokens = tokenStats.inputTokens ?? 0;
+  const outputTokens = tokenStats.outputTokens ?? 0;
+  const cumulativeInput =
+    tokenStats.cumulativeInputTokens ?? tokenStats.totalInputTokens ?? 0;
+  const cumulativeOutput =
+    tokenStats.cumulativeOutputTokens ?? tokenStats.totalOutputTokens ?? 0;
+  const cumulativeTotal =
+    tokenStats.cumulativeTotalTokens ?? cumulativeInput + cumulativeOutput;
+
+  const formattedPromptTokens = formatTokens(promptTokens);
+  const formattedInputTokens = formatTokens(inputTokens);
+  const formattedOutputTokens = formatTokens(outputTokens);
+  const formattedCumulative = formatTokens(cumulativeTotal);
+
   const tokensPerSec = tokenStats.tokensPerSecond || 0;
 
   return (
@@ -41,7 +55,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       <Box>
         <Text dimColor>{modelName} | </Text>
         <Text dimColor>
-          Tokens: {formatTokens(totalTokens)} | 
+          Ctx: {formattedPromptTokens} | In: {formattedInputTokens} | Out: {formattedOutputTokens} | Σ: {formattedCumulative} | 
         </Text>
         {tokensPerSec > 0 && (
           <Text dimColor>

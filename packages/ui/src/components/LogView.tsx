@@ -70,10 +70,44 @@ export const LogView: React.FC<LogViewProps> = ({ messages }) => {
       case "token_stats":
         return (
           <Box key={index} marginY={0}>
-            <Text dimColor>
-              📊 Tokens: {message.stats.inputTokens} in, {message.stats.outputTokens} out 
-              ({message.stats.tokensPerSecond.toFixed(1)} tok/s, {message.stats.generationTimeMs}ms)
-            </Text>
+            {(() => {
+              const stats = message.stats || {};
+              const promptTokens =
+                stats.promptTokens ??
+                stats.contextTokens ??
+                stats.inputTokens ??
+                0;
+              const inputTokens = stats.inputTokens ?? 0;
+              const outputTokens = stats.outputTokens ?? 0;
+              const tokensPerSecond = stats.tokensPerSecond ?? 0;
+              const generationTime = stats.generationTimeMs ?? 0;
+              const cumulativeTotal =
+                stats.cumulativeTotalTokens ??
+                (stats.totalInputTokens ?? 0) +
+                  (stats.totalOutputTokens ?? 0);
+
+              const parts: string[] = [
+                `Ctx ${promptTokens} tok`,
+                `In ${inputTokens} tok`,
+                `Out ${outputTokens} tok`,
+              ];
+
+              if (tokensPerSecond > 0) {
+                parts.push(`${tokensPerSecond.toFixed(1)} tok/s`);
+              }
+
+              if (generationTime > 0) {
+                parts.push(`${generationTime} ms`);
+              }
+
+              if (cumulativeTotal > 0) {
+                parts.push(`Σ ${cumulativeTotal} tok`);
+              }
+
+              return (
+                <Text dimColor> {parts.join(" | ")}</Text>
+              );
+            })()}
           </Box>
         );
 
