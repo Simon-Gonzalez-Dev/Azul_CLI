@@ -85,6 +85,11 @@ export class LLMService {
   ]
 }
 
+IMPORTANT for write_file tool:
+- When writing code, extract the actual code from markdown code blocks
+- Remove markdown formatting like \`\`\`python or \`\`\` before writing
+- Write the clean code content only
+
 If you don't need to use any tools, respond with:
 {
   "thought": "Your response",
@@ -96,12 +101,21 @@ If you don't need to use any tools, respond with:
     // The KV cache will efficiently handle the repeated system prompt
     let fullPrompt = fullSystemPrompt;
 
-    // Include conversation history (only user and assistant messages)
+    // Include conversation history (user, assistant, and tool messages)
     for (const msg of conversationHistory) {
       if (msg.role === "user") {
         fullPrompt += `\n\nUser: ${msg.content}`;
       } else if (msg.role === "assistant") {
-        fullPrompt += `\n\nAssistant: ${msg.content}`;
+        if (msg.tool_calls && msg.tool_calls.length > 0) {
+          // Assistant decided to use tools
+          fullPrompt += `\n\nAssistant: ${msg.content || "I'll use tools to help."}`;
+          fullPrompt += `\n\nTool calls: ${JSON.stringify(msg.tool_calls)}`;
+        } else {
+          fullPrompt += `\n\nAssistant: ${msg.content}`;
+        }
+      } else if (msg.role === "tool") {
+        // Tool execution result - critical for the agent to know what happened
+        fullPrompt += `\n\nTool Result (${msg.tool_call_id}): ${msg.content}`;
       }
     }
 

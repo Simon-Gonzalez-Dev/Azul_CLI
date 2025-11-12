@@ -1,6 +1,8 @@
 export interface ChatMessage {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
   content: string;
+  tool_call_id?: string; // For tool role messages
+  tool_calls?: ToolCall[]; // For assistant messages with tool calls
 }
 
 export interface ToolDefinition {
@@ -16,6 +18,7 @@ export interface ToolDefinition {
 }
 
 export interface ToolCall {
+  id?: string; // Unique ID for the tool call
   name: string;
   arguments: any;
 }

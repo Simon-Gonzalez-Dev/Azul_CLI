@@ -28,11 +28,25 @@ export class Agent {
 
 You have access to tools that let you interact with the filesystem and execute shell commands. Use these tools to help the user effectively.
 
+CRITICAL - File Operations:
+- When the user asks you to create, update, or modify a file, you MUST use the write_file tool
+- Do NOT just show the code in your response - actually write it to the file using the tool
+- After writing a file, the tool will show you a diff of changes
+- Always use the write_file tool when generating or updating code files
+
+IMPORTANT - Tool Usage Pattern:
+1. When you need to use a tool, respond with a JSON object containing "tool_calls" array
+2. After you make a tool call, you will receive a "Tool Result" message showing the outcome
+3. Read the tool result carefully - if it shows success, your task may be complete
+4. If the tool result shows success, provide a final response to the user explaining what was done
+5. Only make additional tool calls if the previous ones failed or if more work is needed
+
 When responding, think step by step:
 1. Understand what the user is asking
 2. Determine which tools (if any) you need to use
-3. Execute the tools
-4. Provide a helpful response
+3. Execute the tools (especially write_file for code changes!)
+4. Review the tool results
+5. Provide a helpful final response to the user
 
 Always be concise and helpful. Format code blocks with proper syntax highlighting.`;
   }
@@ -149,6 +163,13 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
       }
 
       if (parsedResponse.tool_calls && parsedResponse.tool_calls.length > 0) {
+        // Add assistant's tool call decision to history
+        this.conversationHistory.push({
+          role: "assistant",
+          content: parsedResponse.thought || "I'll use tools to complete this task.",
+          tool_calls: parsedResponse.tool_calls,
+        });
+        
         await this.executeToolCalls(parsedResponse.tool_calls);
         await this.runAgentLoop();
       } else if (parsedResponse.response) {
@@ -202,10 +223,20 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
     for (const toolCall of toolCalls) {
       const tool = getToolByName(toolCall.name);
       
+      // Generate unique ID for tool call if not provided
+      const toolCallId = toolCall.id || `call_${Math.random().toString(36).substring(2, 15)}`;
+      
       if (!tool) {
         this.sendMessage({
           type: "error",
           message: `Unknown tool: ${toolCall.name}`,
+        });
+        
+        // Add error result to history as tool message
+        this.conversationHistory.push({
+          role: "tool",
+          content: JSON.stringify({ success: false, error: `Unknown tool: ${toolCall.name}` }),
+          tool_call_id: toolCallId,
         });
         continue;
       }
@@ -220,15 +251,18 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         const approved = await this.requestApproval(toolCall.name, toolCall.arguments);
         
         if (!approved) {
+          const result = { success: false, error: "User denied approval" };
           this.sendMessage({
             type: "tool_result",
             tool: toolCall.name,
-            result: { success: false, error: "User denied approval" },
+            result,
           });
           
+          // Add denial result to history as tool message
           this.conversationHistory.push({
-            role: "assistant",
-            content: `Tool ${toolCall.name} was denied by the user.`,
+            role: "tool",
+            content: JSON.stringify(result),
+            tool_call_id: toolCallId,
           });
           continue;
         }
@@ -243,20 +277,25 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
           result,
         });
 
+        // Add tool result to history with "tool" role - this is critical for the loop!
         this.conversationHistory.push({
-          role: "assistant",
-          content: `Executed ${toolCall.name} with result: ${JSON.stringify(result)}`,
+          role: "tool",
+          content: JSON.stringify(result),
+          tool_call_id: toolCallId,
         });
       } catch (error: any) {
+        const result = { success: false, error: error.message };
         this.sendMessage({
           type: "tool_result",
           tool: toolCall.name,
-          result: { success: false, error: error.message },
+          result,
         });
 
+        // Add error result to history as tool message
         this.conversationHistory.push({
-          role: "assistant",
-          content: `Error executing ${toolCall.name}: ${error.message}`,
+          role: "tool",
+          content: JSON.stringify(result),
+          tool_call_id: toolCallId,
         });
       }
     }
