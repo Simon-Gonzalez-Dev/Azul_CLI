@@ -9,9 +9,9 @@ interface UserInputProps {
 // Available commands
 const COMMANDS = [
   { name: "help", description: "Show available commands" },
-  { name: "exit", description: "Exit the application" },
-  { name: "quit", description: "Exit the application (alias)" },
+  { name: "reset", description: "Reset agent memory/context" },
   { name: "clear", description: "Clear the screen" },
+  { name: "quit", description: "Exit the application" },
 ];
 
 export const UserInput: React.FC<UserInputProps> = ({ onSubmit, disabled = false }) => {

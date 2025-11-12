@@ -52,23 +52,7 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
   }
 
   async handleUserMessage(content: string): Promise<void> {
-    if (content.toLowerCase().trim() === "reset") {
-      this.reset();
-      this.sendMessage({
-        type: "agent_response",
-        content: "Memory reset. Conversation history cleared.",
-      });
-      return;
-    }
-
-    if (content.toLowerCase().trim() === "exit" || content.toLowerCase().trim() === "quit") {
-      this.sendMessage({
-        type: "agent_response",
-        content: "Goodbye! Exiting...",
-      });
-      return;
-    }
-
+    // All commands are handled in the UI layer - this only processes regular user messages
     this.currentLoopCount = 0;
     this.conversationHistory.push({
       role: "user",

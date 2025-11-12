@@ -10,9 +10,10 @@ export interface AppProps {
   onUserInput: (text: string) => void;
   onApproval: (requestId: string, approved: boolean) => void;
   onMessage: (handler: (message: any) => void) => void;
+  onReset: () => void;
 }
 
-export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage }) => {
+export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, onReset }) => {
   const [state, setState] = useState<AppState>({
     messages: [],
     connected: true,
@@ -158,8 +159,19 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage }) 
     if (trimmedText.startsWith("/")) {
       const command = lowerText.slice(1).split(" ")[0]; // Get command name (before any args)
       
-      if (command === "exit" || command === "quit") {
+      if (command === "quit") {
         process.exit(0);
+        return;
+      }
+      
+      if (command === "reset") {
+        onReset();
+        handleServerMessage({
+          type: "system",
+          message: "Agent memory reset. Conversation context cleared.",
+          timestamp: Date.now(),
+        });
+        // Don't clear UI messages - only reset agent memory
         return;
       }
       
@@ -168,6 +180,11 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage }) 
           ...prev,
           messages: prev.messages.filter((m) => m.type === "token_stats"), // Keep token stats
         }));
+        handleServerMessage({
+          type: "system",
+          message: "Screen cleared.",
+          timestamp: Date.now(),
+        });
         return;
       }
       
@@ -176,9 +193,9 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage }) 
           type: "system",
           message: `Available Commands:
 /help     - Show this help message
-/exit     - Exit the application
-/quit     - Exit the application (alias)
-/clear    - Clear the message history
+/reset    - Reset agent memory/context (keeps screen)
+/clear    - Clear the screen (keeps memory)
+/quit     - Exit the application
 
 All commands must start with /. Type / and press Tab to see available commands.`,
           timestamp: Date.now(),
@@ -195,12 +212,7 @@ All commands must start with /. Type / and press Tab to see available commands.`
       return;
     }
 
-    // Handle legacy commands without / prefix (for backward compatibility)
-    if (lowerText === "exit" || lowerText === "quit") {
-      process.exit(0);
-      return;
-    }
-
+    // All commands must use / prefix - no exceptions
     // Regular input - send to agent
     onUserInput(text);
   };

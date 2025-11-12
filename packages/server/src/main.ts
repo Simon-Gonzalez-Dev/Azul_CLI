@@ -89,6 +89,11 @@ async function main() {
     agent.handleUserMessage(text);
   };
 
+  // Handle reset command
+  const handleReset = () => {
+    agent.reset();
+  };
+
   // Render UI with direct callbacks
   render(
     React.createElement(App, {
@@ -97,6 +102,7 @@ async function main() {
       onMessage: (handler: (message: any) => void) => {
         messageHandlers.onMessage = handler;
       },
+      onReset: handleReset,
     })
   );
 
