@@ -58,6 +58,7 @@ export const LogView: React.FC<LogViewProps> = ({ messages }) => {
         );
 
       case "agent_response":
+      case "agent_response_stream":
         return (
           <Box key={index} marginY={0} flexDirection="column">
             <Text color="green" bold>

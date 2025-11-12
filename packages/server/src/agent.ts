@@ -1,25 +1,29 @@
 import { LLMService } from "./llm.js";
-import { ChatMessage, ToolCall, WebSocketMessage, ToolDefinition } from "./types.js";
+import { ChatMessage, ToolCall, ToolDefinition } from "./types.js";
 import { tools, getToolByName } from "./tools/index.js";
+
+export type MessageCallback = (message: {
+  type: string;
+  [key: string]: any;
+}) => void;
 
 export class Agent {
   private llm: LLMService;
-  private conversationHistory: ChatMessage[] = []; // Only user and assistant messages
-  private systemPrompt: string = ""; // Base system prompt - never changes
-  private sendMessage: (message: WebSocketMessage) => void;
+  private conversationHistory: ChatMessage[] = [];
+  private systemPrompt: string = "";
+  private sendMessage: MessageCallback;
   private pendingApprovals: Map<string, { resolve: (approved: boolean) => void }> = new Map();
   private maxLoopIterations: number = 10;
   private currentLoopCount: number = 0;
+  private streamingResponse: string = "";
 
-  constructor(sendMessage: (message: WebSocketMessage) => void, llm: LLMService) {
+  constructor(sendMessage: MessageCallback, llm: LLMService) {
     this.sendMessage = sendMessage;
     this.llm = llm;
     this.initializeSystemPrompt();
   }
 
   private initializeSystemPrompt(): void {
-    // This is the foundational instruction that never changes
-    // It's separated from conversation history for efficient KV caching
     this.systemPrompt = `You are Azul, an AI coding assistant running locally. You help users with coding tasks by analyzing files, executing commands, and providing solutions.
 
 You have access to tools that let you interact with the filesystem and execute shell commands. Use these tools to help the user effectively.
@@ -33,9 +37,7 @@ When responding, think step by step:
 Always be concise and helpful. Format code blocks with proper syntax highlighting.`;
   }
 
-
   async handleUserMessage(content: string): Promise<void> {
-    // Handle reset command
     if (content.toLowerCase().trim() === "reset") {
       this.reset();
       this.sendMessage({
@@ -45,7 +47,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
       return;
     }
 
-    // Handle exit command
     if (content.toLowerCase().trim() === "exit" || content.toLowerCase().trim() === "quit") {
       this.sendMessage({
         type: "agent_response",
@@ -54,10 +55,7 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
       return;
     }
 
-    // Reset loop counter for new message
     this.currentLoopCount = 0;
-
-    // Add user message to history
     this.conversationHistory.push({
       role: "user",
       content,
@@ -68,18 +66,14 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
       content,
     });
 
-    // Start the agent loop
     await this.runAgentLoop();
   }
 
   reset(): void {
-    // Clear conversation history only - system prompt remains unchanged
-    // This leverages KV caching: system prompt is cached, only new history is processed
     this.conversationHistory = [];
     this.llm.resetTokenStats();
     this.currentLoopCount = 0;
     
-    // Cancel any pending approvals
     this.pendingApprovals.forEach((pending) => {
       pending.resolve(false);
     });
@@ -87,7 +81,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
   }
 
   private async runAgentLoop(): Promise<void> {
-    // Prevent infinite loops
     if (this.currentLoopCount >= this.maxLoopIterations) {
       this.sendMessage({
         type: "error",
@@ -103,21 +96,36 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
     this.currentLoopCount++;
 
     try {
-      // Send thinking state
       this.sendMessage({
         type: "agent_thinking",
         content: "Thinking...",
       });
 
-      // Get completion from LLM
-      // Pass system prompt separately from conversation history for efficient KV caching
+      this.streamingResponse = "";
+      let isFirstToken = true;
+
       const { response, stats } = await this.llm.getCompletion(
         this.systemPrompt,
         this.conversationHistory,
-        tools
+        tools,
+        (token: string) => {
+          // Stream tokens for faster time-to-first-token
+          if (isFirstToken) {
+            isFirstToken = false;
+            // Clear thinking message when first token arrives
+            this.sendMessage({
+              type: "agent_thinking",
+              content: "",
+            });
+          }
+          this.streamingResponse += token;
+          this.sendMessage({
+            type: "agent_response_stream",
+            content: this.streamingResponse,
+          });
+        }
       );
 
-      // Send token statistics
       const totalStats = this.llm.getTokenStats();
       this.sendMessage({
         type: "token_stats",
@@ -131,7 +139,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         },
       });
 
-      // Parse the response
       const parsedResponse = this.parseResponse(response);
 
       if (parsedResponse.thought) {
@@ -141,26 +148,20 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         });
       }
 
-      // If there are tool calls, execute them
       if (parsedResponse.tool_calls && parsedResponse.tool_calls.length > 0) {
         await this.executeToolCalls(parsedResponse.tool_calls);
-        
-        // After executing tools, run the loop again to get final response
         await this.runAgentLoop();
       } else if (parsedResponse.response) {
-        // Send final response
         this.sendMessage({
           type: "agent_response",
           content: parsedResponse.response,
         });
 
-        // Add assistant response to history
         this.conversationHistory.push({
           role: "assistant",
           content: parsedResponse.response,
         });
       } else {
-        // If no response or tool calls, treat the raw response as the answer
         this.sendMessage({
           type: "agent_response",
           content: response,
@@ -185,7 +186,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
     response?: string;
   } {
     try {
-      // Try to find JSON in the response
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
@@ -195,7 +195,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
       // If parsing fails, treat the whole response as a text response
     }
 
-    // If no JSON found or parsing failed, return as plain response
     return { response };
   }
 
@@ -211,14 +210,12 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         continue;
       }
 
-      // Send tool call notification
       this.sendMessage({
         type: "tool_call",
         tool: toolCall.name,
         args: toolCall.arguments,
       });
 
-      // Check if approval is required
       if (tool.requiresApproval) {
         const approved = await this.requestApproval(toolCall.name, toolCall.arguments);
         
@@ -229,7 +226,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
             result: { success: false, error: "User denied approval" },
           });
           
-          // Add to conversation history
           this.conversationHistory.push({
             role: "assistant",
             content: `Tool ${toolCall.name} was denied by the user.`,
@@ -238,7 +234,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         }
       }
 
-      // Execute the tool
       try {
         const result = await tool.execute(toolCall.arguments);
         
@@ -248,7 +243,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
           result,
         });
 
-        // Add to conversation history
         this.conversationHistory.push({
           role: "assistant",
           content: `Executed ${toolCall.name} with result: ${JSON.stringify(result)}`,
@@ -281,13 +275,12 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         args,
       });
 
-      // Set a timeout for approval
       setTimeout(() => {
         if (this.pendingApprovals.has(requestId)) {
           this.pendingApprovals.delete(requestId);
           resolve(false);
         }
-      }, 60000); // 60 second timeout
+      }, 60000);
     });
   }
 
@@ -299,4 +292,3 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
     }
   }
 }
-

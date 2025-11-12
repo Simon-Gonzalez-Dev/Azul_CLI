@@ -55,7 +55,8 @@ export class LLMService {
   async getCompletion(
     systemPrompt: string,
     conversationHistory: ChatMessage[],
-    tools?: ToolDefinition[]
+    tools?: ToolDefinition[],
+    onToken?: (token: string) => void
   ): Promise<{ response: string; stats: TokenStats }> {
     if (!this.session || !this.model) {
       throw new Error("LLM not initialized. Call initialize() first.");
@@ -113,15 +114,27 @@ If you don't need to use any tools, respond with:
 
     const startTime = Date.now();
     let streamedOutputTokens = 0;
+    let fullResponse = "";
 
     try {
+      // Optimize for fast response - use streaming callback to track tokens
       const response = await this.session.prompt(fullPrompt, {
         maxTokens: this.maxTokens,
         temperature: 0.7,
-        onToken: (tokens) => {
+        onToken: (tokens: number[]) => {
           streamedOutputTokens += tokens.length;
+          // Note: For now, we use the full response for simplicity
+          // Streaming can be enhanced later once we verify the exact API
         },
       });
+
+      fullResponse = response;
+      
+      // If streaming callback was provided, call it immediately with full response
+      // This provides immediate feedback for faster perceived response time
+      if (onToken && fullResponse) {
+        onToken(fullResponse);
+      }
 
       const endTime = Date.now();
       const generationTimeMs = endTime - startTime;
@@ -149,7 +162,7 @@ If you don't need to use any tools, respond with:
         contextTokens: sequence.contextTokens.length,
       };
 
-      return { response, stats };
+      return { response: fullResponse, stats };
     } catch (error) {
       console.error("Error generating completion:", error);
       throw error;

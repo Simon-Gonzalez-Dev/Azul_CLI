@@ -20,14 +20,8 @@ export interface ToolCall {
   arguments: any;
 }
 
-export interface WebSocketMessage {
-  type: string;
-  [key: string]: any;
-}
-
 export interface Config {
   modelPath: string;
-  port: number;
   contextSize: number;
   maxTokens: number;
 }

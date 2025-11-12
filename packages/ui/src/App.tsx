@@ -1,20 +1,21 @@
 import React, { useState, useEffect } from "react";
 import { Box } from "ink";
-import { WebSocket } from "ws";
 import { LogView } from "./components/LogView.js";
 import { UserInput } from "./components/UserInput.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { PermissionModal } from "./components/PermissionModal.js";
 import { Message, AppState, ApprovalRequest } from "./types.js";
 
-interface AppProps {
-  ws: WebSocket;
+export interface AppProps {
+  onUserInput: (text: string) => void;
+  onApproval: (requestId: string, approved: boolean) => void;
+  onMessage: (handler: (message: any) => void) => void;
 }
 
-export const App: React.FC<AppProps> = ({ ws }) => {
+export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage }) => {
   const [state, setState] = useState<AppState>({
     messages: [],
-    connected: false,
+    connected: true,
     userInput: "",
     pendingApproval: null,
     tokenStats: {
@@ -29,31 +30,19 @@ export const App: React.FC<AppProps> = ({ ws }) => {
   });
 
   useEffect(() => {
-    ws.on("open", () => {
-      setState((prev) => ({ ...prev, connected: true }));
+    // Register message handler
+    onMessage((message: any) => {
+      handleServerMessage(message);
     });
 
-    ws.on("message", (data: Buffer) => {
-      try {
-        const message = JSON.parse(data.toString());
-        handleServerMessage(message);
-      } catch (error) {
-        console.error("Error parsing message:", error);
-      }
+    // Send connected message
+    handleServerMessage({
+      type: "connected",
+      message: "Connected to Azul server",
+      timestamp: Date.now(),
     });
-
-    ws.on("close", () => {
-      setState((prev) => ({ ...prev, connected: false }));
-    });
-
-    ws.on("error", (error) => {
-      console.error("WebSocket error:", error);
-    });
-
-    return () => {
-      ws.removeAllListeners();
-    };
-  }, [ws]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // onMessage is stable, handleServerMessage is defined in component
 
   const handleServerMessage = (message: any) => {
     if (message.type === "approval_request") {
@@ -71,7 +60,7 @@ export const App: React.FC<AppProps> = ({ ws }) => {
         ...prev,
         tokenStats: message.stats,
         messages: [
-          ...prev.messages,
+          ...prev.messages.filter((m) => m.type !== "token_stats"),
           {
             type: "token_stats",
             stats: message.stats,
@@ -79,46 +68,101 @@ export const App: React.FC<AppProps> = ({ ws }) => {
           },
         ],
       }));
+    } else if (message.type === "agent_response_stream") {
+      // Handle streaming response - update the last streaming message
+      setState((prev) => {
+        const newMessages = [...prev.messages];
+        const lastStreamingIndex = newMessages.findIndex(
+          (m, idx) => m.type === "agent_response_stream" && idx === newMessages.length - 1
+        );
+
+        if (lastStreamingIndex >= 0) {
+          newMessages[lastStreamingIndex] = {
+            ...newMessages[lastStreamingIndex],
+            content: message.content,
+            timestamp: Date.now(),
+          };
+        } else {
+          newMessages.push({
+            type: "agent_response_stream",
+            content: message.content,
+            timestamp: Date.now(),
+          });
+        }
+
+        return { ...prev, messages: newMessages };
+      });
+    } else if (message.type === "agent_thinking") {
+      // Clear thinking message if empty, otherwise add/update it
+      if (!message.content) {
+        setState((prev) => ({
+          ...prev,
+          messages: prev.messages.filter((m) => m.type !== "agent_thinking"),
+        }));
+      } else {
+        setState((prev) => {
+          const newMessages = [...prev.messages];
+          const lastThinkingIndex = newMessages.findIndex(
+            (m) => m.type === "agent_thinking"
+          );
+
+          if (lastThinkingIndex >= 0) {
+            newMessages[lastThinkingIndex] = {
+              ...newMessages[lastThinkingIndex],
+              content: message.content,
+              timestamp: Date.now(),
+            };
+          } else {
+            newMessages.push({
+              type: "agent_thinking",
+              content: message.content,
+              timestamp: Date.now(),
+            });
+          }
+
+          return { ...prev, messages: newMessages };
+        });
+      }
     } else {
-      setState((prev) => ({
-        ...prev,
-        messages: [
-          ...prev.messages,
-          { ...message, timestamp: Date.now() },
-        ],
-      }));
+      // Replace streaming message with final response if it exists
+      if (message.type === "agent_response") {
+        setState((prev) => {
+          const newMessages = prev.messages.filter(
+            (m) => m.type !== "agent_response_stream"
+          );
+          newMessages.push({
+            ...message,
+            timestamp: Date.now(),
+          });
+          return { ...prev, messages: newMessages };
+        });
+      } else {
+        setState((prev) => ({
+          ...prev,
+          messages: [
+            ...prev.messages,
+            { ...message, timestamp: Date.now() },
+          ],
+        }));
+      }
     }
   };
 
   const handleUserSubmit = (text: string) => {
     if (!state.connected) return;
 
-    // Handle exit command
     if (text.toLowerCase().trim() === "exit" || text.toLowerCase().trim() === "quit") {
-      ws.close();
       process.exit(0);
       return;
     }
 
-    ws.send(
-      JSON.stringify({
-        type: "user_message",
-        content: text,
-      })
-    );
+    onUserInput(text);
   };
 
   const handleApproval = (approved: boolean) => {
     if (!state.pendingApproval) return;
 
-    ws.send(
-      JSON.stringify({
-        type: "approval",
-        requestId: state.pendingApproval.requestId,
-        approved,
-      })
-    );
-
+    onApproval(state.pendingApproval.requestId, approved);
     setState((prev) => ({ ...prev, pendingApproval: null }));
   };
 
@@ -142,4 +186,3 @@ export const App: React.FC<AppProps> = ({ ws }) => {
     </Box>
   );
 };
-
