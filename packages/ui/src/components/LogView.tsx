@@ -160,6 +160,25 @@ export const LogView: React.FC<LogViewProps> = ({ messages }) => {
           </Box>
         );
 
+      case "system":
+        return (
+          <Box key={index} marginY={0} flexDirection="column">
+            <Text color="yellow" bold>
+              System:
+            </Text>
+            <Text>{message.message}</Text>
+          </Box>
+        );
+
+      case "mode_changed":
+        return (
+          <Box key={index} marginY={0}>
+            <Text color="cyan">
+              Mode switched to: {message.mode === "api" ? "Gemini API" : "Local LLM"}
+            </Text>
+          </Box>
+        );
+
       default:
         return (
           <Box key={index} marginY={0}>

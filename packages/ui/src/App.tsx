@@ -151,11 +151,57 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage }) 
   const handleUserSubmit = (text: string) => {
     if (!state.connected) return;
 
-    if (text.toLowerCase().trim() === "exit" || text.toLowerCase().trim() === "quit") {
+    const trimmedText = text.trim();
+    const lowerText = trimmedText.toLowerCase();
+
+    // Handle commands (must start with /)
+    if (trimmedText.startsWith("/")) {
+      const command = lowerText.slice(1).split(" ")[0]; // Get command name (before any args)
+      
+      if (command === "exit" || command === "quit") {
+        process.exit(0);
+        return;
+      }
+      
+      if (command === "clear") {
+        setState((prev) => ({
+          ...prev,
+          messages: prev.messages.filter((m) => m.type === "token_stats"), // Keep token stats
+        }));
+        return;
+      }
+      
+      if (command === "help") {
+        handleServerMessage({
+          type: "system",
+          message: `Available Commands:
+/help     - Show this help message
+/exit     - Exit the application
+/quit     - Exit the application (alias)
+/clear    - Clear the message history
+
+All commands must start with /. Type / and press Tab to see available commands.`,
+          timestamp: Date.now(),
+        });
+        return;
+      }
+      
+      // Unknown command - show error
+      handleServerMessage({
+        type: "error",
+        message: `Unknown command: ${trimmedText}. Type /help for available commands.`,
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    // Handle legacy commands without / prefix (for backward compatibility)
+    if (lowerText === "exit" || lowerText === "quit") {
       process.exit(0);
       return;
     }
 
+    // Regular input - send to agent
     onUserInput(text);
   };
 

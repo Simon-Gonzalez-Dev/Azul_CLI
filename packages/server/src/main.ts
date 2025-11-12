@@ -84,6 +84,8 @@ async function main() {
 
   // Handle user input
   const handleUserInput = (text: string) => {
+    // Commands starting with / are handled in the UI
+    // This function only receives non-command input
     agent.handleUserMessage(text);
   };
 
