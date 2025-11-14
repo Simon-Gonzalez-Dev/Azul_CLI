@@ -12,10 +12,12 @@ export interface AppProps {
   onMessage: (handler: (message: any) => void) => void;
   onReset: () => void;
   onSwitchMode: (mode: "local" | "api") => void;
+  onChangeDirectory: (path: string) => void;
+  onListDirectory: (path?: string) => void;
   currentMode?: "local" | "api";
 }
 
-export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, onReset, onSwitchMode, currentMode = "local" }) => {
+export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, onReset, onSwitchMode, onChangeDirectory, onListDirectory, currentMode = "local" }) => {
   const [state, setState] = useState<AppState>({
     messages: [],
     connected: true,
@@ -215,6 +217,26 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
         return;
       }
       
+      if (command === "cd") {
+        const args = trimmedText.slice(4).trim(); // Remove "/cd " prefix
+        if (!args) {
+          handleServerMessage({
+            type: "error",
+            message: "cd: missing directory argument. Usage: /cd <directory>",
+            timestamp: Date.now(),
+          });
+        } else {
+          onChangeDirectory(args);
+        }
+        return;
+      }
+      
+      if (command === "ls") {
+        const args = trimmedText.slice(3).trim(); // Remove "/ls " prefix
+        onListDirectory(args || undefined);
+        return;
+      }
+      
       if (command === "help") {
         handleServerMessage({
           type: "system",
@@ -222,6 +244,8 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
 /help     - Show this help message
 /reset    - Reset agent memory/context (keeps screen)
 /clear    - Clear the screen (keeps memory)
+/cd <dir> - Change directory (e.g., /cd /path/to/dir or /cd ..)
+/ls [dir] - List directory contents (e.g., /ls or /ls /path)
 /api      - Switch to API mode (OpenRouter)
 /local    - Switch to local LLM mode
 /quit     - Exit the application

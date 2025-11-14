@@ -1,3 +1,4 @@
+import * as path from "path";
 import { ILLMService } from "./llm-interface.js";
 import { ChatMessage, ToolCall, ToolDefinition } from "./types.js";
 import { tools, getToolByName } from "./tools/index.js";
@@ -16,15 +17,25 @@ export class Agent {
   private maxLoopIterations: number = 10;
   private currentLoopCount: number = 0;
   private streamingResponse: string = "";
+  private workingDirectory: string;
 
-  constructor(sendMessage: MessageCallback, llm: ILLMService) {
+  constructor(sendMessage: MessageCallback, llm: ILLMService, workingDirectory?: string) {
     this.sendMessage = sendMessage;
     this.llm = llm;
+    this.workingDirectory = workingDirectory || process.cwd();
     this.initializeSystemPrompt();
   }
 
   setLLM(llm: ILLMService): void {
     this.llm = llm;
+  }
+
+  setWorkingDirectory(dir: string): void {
+    this.workingDirectory = dir;
+  }
+
+  getWorkingDirectory(): string {
+    return this.workingDirectory;
   }
 
   private initializeSystemPrompt(): void {
@@ -229,14 +240,22 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         continue;
       }
 
+      // Resolve paths relative to working directory for file operations
+      const resolvedArgs = { ...toolCall.arguments };
+      if (toolCall.name === "read_file" || toolCall.name === "write_file" || toolCall.name === "list_dir") {
+        if (resolvedArgs.path && !path.isAbsolute(resolvedArgs.path)) {
+          resolvedArgs.path = path.resolve(this.workingDirectory, resolvedArgs.path);
+        }
+      }
+
       this.sendMessage({
         type: "tool_call",
         tool: toolCall.name,
-        args: toolCall.arguments,
+        args: resolvedArgs,
       });
 
       if (tool.requiresApproval) {
-        const approved = await this.requestApproval(toolCall.name, toolCall.arguments);
+        const approved = await this.requestApproval(toolCall.name, resolvedArgs);
         
         if (!approved) {
           const result = { success: false, error: "User denied approval" };
@@ -256,8 +275,8 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         }
       }
 
-      try {
-        const result = await tool.execute(toolCall.arguments);
+        try {
+          const result = await tool.execute(resolvedArgs);
         
         this.sendMessage({
           type: "tool_result",

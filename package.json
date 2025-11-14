@@ -2,14 +2,19 @@
   "name": "azul",
   "version": "1.0.0",
   "description": "A locally-run AI coding assistant with terminal UI",
-  "private": true,
+  "private": false,
+  "bin": {
+    "azul": "./bin/azul.js"
+  },
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
     "build": "npm run build -ws",
+    "build:global": "cd packages/server && npm run build && cd ../ui && npm run build",
     "dev": "npm run build && node packages/server/dist/main.js",
-    "clean": "rm -rf packages/*/dist"
+    "clean": "rm -rf packages/*/dist",
+    "install:global": "npm run build:global && npm install -g ."
   },
   "keywords": [
     "ai",
@@ -18,6 +23,26 @@
     "terminal"
   ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "files": [
+    "bin",
+    "packages/server/dist",
+    "packages/server/package.json",
+    "packages/ui/dist",
+    "packages/ui/package.json",
+    "config.json"
+  ],
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "dotenv": "^17.2.3",
+    "ink": "^4.4.1",
+    "node-llama-cpp": "^3.0.0",
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/react": "^18.2.42",
+    "typescript": "^5.3.3"
+  }
 }
 

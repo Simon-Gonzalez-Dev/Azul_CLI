@@ -11,6 +11,8 @@ const COMMANDS = [
   { name: "help", description: "Show available commands" },
   { name: "reset", description: "Reset agent memory/context" },
   { name: "clear", description: "Clear the screen" },
+  { name: "cd", description: "Change directory (e.g., /cd /path/to/dir)" },
+  { name: "ls", description: "List directory contents (e.g., /ls or /ls /path)" },
   { name: "api", description: "Switch to API mode (OpenRouter)" },
   { name: "local", description: "Switch to local LLM mode" },
   { name: "quit", description: "Exit the application" },
