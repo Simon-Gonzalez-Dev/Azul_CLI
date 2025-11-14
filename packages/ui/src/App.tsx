@@ -11,9 +11,11 @@ export interface AppProps {
   onApproval: (requestId: string, approved: boolean) => void;
   onMessage: (handler: (message: any) => void) => void;
   onReset: () => void;
+  onSwitchMode: (mode: "local" | "api") => void;
+  currentMode?: "local" | "api";
 }
 
-export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, onReset }) => {
+export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, onReset, onSwitchMode, currentMode = "local" }) => {
   const [state, setState] = useState<AppState>({
     messages: [],
     connected: true,
@@ -29,6 +31,8 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
       totalOutputTokens: 0,
     },
   });
+
+  const [mode, setMode] = useState<"local" | "api">(currentMode);
 
   useEffect(() => {
     // Register message handler
@@ -124,6 +128,19 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
           return { ...prev, messages: newMessages };
         });
       }
+    } else if (message.type === "mode_changed") {
+      setMode(message.mode);
+      setState((prev) => ({
+        ...prev,
+        messages: [
+          ...prev.messages,
+          {
+            type: "system",
+            message: `Switched to ${message.mode === "api" ? "API (OpenRouter)" : "Local LLM"} mode`,
+            timestamp: Date.now(),
+          },
+        ],
+      }));
     } else {
       // Replace streaming message with final response if it exists
       if (message.type === "agent_response") {
@@ -188,6 +205,16 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
         return;
       }
       
+      if (command === "api") {
+        onSwitchMode("api");
+        return;
+      }
+      
+      if (command === "local") {
+        onSwitchMode("local");
+        return;
+      }
+      
       if (command === "help") {
         handleServerMessage({
           type: "system",
@@ -195,7 +222,11 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
 /help     - Show this help message
 /reset    - Reset agent memory/context (keeps screen)
 /clear    - Clear the screen (keeps memory)
+/api      - Switch to API mode (OpenRouter)
+/local    - Switch to local LLM mode
 /quit     - Exit the application
+
+Current mode: ${mode === "api" ? "API (OpenRouter)" : "Local LLM"}
 
 All commands must start with /. Type / and press Tab to see available commands.`,
           timestamp: Date.now(),
@@ -226,7 +257,7 @@ All commands must start with /. Type / and press Tab to see available commands.`
 
   return (
     <Box flexDirection="column" height="100%">
-      <StatusBar connected={state.connected} tokenStats={state.tokenStats} />
+      <StatusBar connected={state.connected} tokenStats={state.tokenStats} mode={mode} />
       <Box flexDirection="column" flexGrow={1} paddingY={1}>
         <LogView messages={state.messages} />
       </Box>

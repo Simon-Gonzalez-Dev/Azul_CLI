@@ -6,12 +6,14 @@ interface StatusBarProps {
   connected: boolean;
   modelName?: string;
   tokenStats: TokenStats;
+  mode?: "local" | "api";
 }
 
 export const StatusBar: React.FC<StatusBarProps> = ({ 
   connected, 
   modelName = "Qwen 2.5 Coder",
-  tokenStats 
+  tokenStats,
+  mode = "local"
 }) => {
   const formatTokens = (tokens: number): string => {
     if (tokens >= 1000000) {
@@ -50,7 +52,10 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         <Text bold color="cyan">
           AZUL
         </Text>
-        <Text dimColor> | AI Coding Assistant</Text>
+        <Text dimColor> | AI Coding Assistant </Text>
+        <Text color={mode === "api" ? "yellow" : "cyan"}>
+          [{mode === "api" ? "API" : "Local"}]
+        </Text>
       </Box>
       <Box>
         <Text dimColor>{modelName} | </Text>

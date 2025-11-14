@@ -1,4 +1,4 @@
-import { LLMService } from "./llm.js";
+import { ILLMService } from "./llm-interface.js";
 import { ChatMessage, ToolCall, ToolDefinition } from "./types.js";
 import { tools, getToolByName } from "./tools/index.js";
 
@@ -8,7 +8,7 @@ export type MessageCallback = (message: {
 }) => void;
 
 export class Agent {
-  private llm: LLMService;
+  private llm: ILLMService;
   private conversationHistory: ChatMessage[] = [];
   private systemPrompt: string = "";
   private sendMessage: MessageCallback;
@@ -17,10 +17,14 @@ export class Agent {
   private currentLoopCount: number = 0;
   private streamingResponse: string = "";
 
-  constructor(sendMessage: MessageCallback, llm: LLMService) {
+  constructor(sendMessage: MessageCallback, llm: ILLMService) {
     this.sendMessage = sendMessage;
     this.llm = llm;
     this.initializeSystemPrompt();
+  }
+
+  setLLM(llm: ILLMService): void {
+    this.llm = llm;
   }
 
   private initializeSystemPrompt(): void {

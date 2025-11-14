@@ -2,13 +2,19 @@
 
 import * as path from "path";
 import * as fs from "fs/promises";
+import * as dotenv from "dotenv";
 import { LLMService } from "./llm.js";
+import { OpenRouterLLMService } from "./openrouter-llm.js";
+import { ILLMService } from "./llm-interface.js";
 import { Config } from "./types.js";
 import { Agent } from "./agent.js";
 import { render } from "ink";
 import React from "react";
 // Import from dist - TypeScript will use .d.ts files for type checking
 import { App } from "../../ui/dist/App.js";
+
+// Load environment variables
+dotenv.config();
 
 const BANNER = `
   
@@ -50,17 +56,40 @@ async function main() {
   console.log(`   Model: ${config.modelPath}`);
   console.log(`   Context Size: ${config.contextSize}\n`);
 
-  // Initialize LLM
-  const llm = new LLMService(config.contextSize, config.maxTokens);
+  // Initialize mode tracking
+  let currentMode: "local" | "api" = "local";
+  let currentLLM: ILLMService;
+
+  // Initialize Local LLM
+  const localLLM = new LLMService(config.contextSize, config.maxTokens);
   const modelPath = path.resolve(process.cwd(), config.modelPath);
   
   try {
-    await llm.initialize(modelPath);
-    console.log("   LLM initialized\n");
+    await localLLM.initialize(modelPath);
+    console.log("   Local LLM initialized\n");
+    currentLLM = localLLM;
   } catch (error) {
-    console.error(" Failed to initialize LLM:", error);
+    console.error(" Failed to initialize local LLM:", error);
     console.error("\nMake sure the model file exists at:", modelPath);
     process.exit(1);
+  }
+
+  // Initialize OpenRouter API (if API key is available)
+  const openRouterApiKey = process.env.OPENROUTER_API_KEY;
+  let apiLLM: OpenRouterLLMService | null = null;
+  
+  if (openRouterApiKey) {
+    try {
+      apiLLM = new OpenRouterLLMService(openRouterApiKey);
+      await apiLLM.initialize({});
+      console.log("   OpenRouter API initialized (use /api to switch)\n");
+    } catch (error: any) {
+      console.error("   Warning: Failed to initialize OpenRouter API:", error.message);
+      console.error("   Continuing with local mode only\n");
+    }
+  } else {
+    console.log("   OpenRouter API key not found in .env (OPENROUTER_API_KEY)");
+    console.log("   Continuing with local mode only\n");
   }
 
   // Create message handler for UI
@@ -75,7 +104,7 @@ async function main() {
   // Create agent with direct callback
   const agent = new Agent((message: any) => {
     messageHandlers.onMessage(message);
-  }, llm);
+  }, currentLLM);
 
   // Handle approval requests
   messageHandlers.onApproval = (requestId: string, approved: boolean) => {
@@ -94,6 +123,37 @@ async function main() {
     agent.reset();
   };
 
+  // Handle mode switching
+  const handleSwitchMode = (mode: "local" | "api") => {
+    if (mode === "api") {
+      if (apiLLM) {
+        currentMode = "api";
+        currentLLM = apiLLM;
+        agent.setLLM(apiLLM);
+        messageHandlers.onMessage({
+          type: "mode_changed",
+          mode: "api",
+          timestamp: Date.now(),
+        });
+      } else {
+        messageHandlers.onMessage({
+          type: "error",
+          message: "OpenRouter API not available. Make sure OPENROUTER_API_KEY is set in .env file.",
+          timestamp: Date.now(),
+        });
+      }
+    } else if (mode === "local") {
+      currentMode = "local";
+      currentLLM = localLLM;
+      agent.setLLM(localLLM);
+      messageHandlers.onMessage({
+        type: "mode_changed",
+        mode: "local",
+        timestamp: Date.now(),
+      });
+    }
+  };
+
   // Render UI with direct callbacks
   render(
     React.createElement(App, {
@@ -103,13 +163,15 @@ async function main() {
         messageHandlers.onMessage = handler;
       },
       onReset: handleReset,
+      onSwitchMode: handleSwitchMode,
+      currentMode: currentMode,
     })
   );
 
   // Graceful shutdown
   const shutdown = async () => {
     console.log("\n\n🛑 Shutting down...");
-    await llm.cleanup();
+    await currentLLM.cleanup();
     console.log("👋 Goodbye!");
     process.exit(0);
   };

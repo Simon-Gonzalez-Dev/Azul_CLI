@@ -1,8 +1,9 @@
 import { getLlama, LlamaModel, LlamaContext, LlamaChatSession, TokenMeter } from "node-llama-cpp";
 import { ChatMessage, ToolDefinition, TokenStats } from "./types.js";
+import { ILLMService } from "./llm-interface.js";
 import * as path from "path";
 
-export class LLMService {
+export class LLMService implements ILLMService {
   private model: LlamaModel | null = null;
   private context: LlamaContext | null = null;
   private session: LlamaChatSession | null = null;
@@ -31,7 +32,8 @@ export class LLMService {
     this.totalOutputTokens = 0;
   }
 
-  async initialize(modelPath: string): Promise<void> {
+  async initialize(config: string | { modelPath: string }): Promise<void> {
+    const modelPath = typeof config === "string" ? config : config.modelPath;
     console.log("  Initializing LLM...");
     console.log(`  Loading model from: ${modelPath}`);
 
