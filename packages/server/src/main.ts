@@ -14,12 +14,35 @@ import React from "react";
 // Import from dist - TypeScript will use .d.ts files for type checking
 import { App } from "../../ui/dist/App.js";
 
-// Load environment variables
-dotenv.config();
-
-// Get __dirname equivalent for ES modules
+// Get __dirname equivalent for ES modules (needed for finding package root)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Load environment variables - try package root first, then current directory
+const packageRoot = path.resolve(__dirname, "../../..");
+const packageEnvPath = path.join(packageRoot, ".env");
+const cwdEnvPath = path.join(process.cwd(), ".env");
+
+// Try package root .env first (for global installs), then current directory
+// dotenv.config() doesn't throw if file doesn't exist, so we check both
+const packageEnv = dotenv.config({ path: packageEnvPath });
+if (packageEnv.error) {
+  // Only log if it's a real error (not just file not found)
+  const errorCode = (packageEnv.error as any).code;
+  if (errorCode && errorCode !== 'ENOENT') {
+    console.warn(`Warning: Error loading .env from package root: ${packageEnv.error.message}`);
+  }
+}
+
+// Also try current directory .env (allows project-specific overrides)
+const cwdEnv = dotenv.config({ path: cwdEnvPath });
+if (cwdEnv.error) {
+  const errorCode = (cwdEnv.error as any).code;
+  if (errorCode && errorCode !== 'ENOENT') {
+    console.warn(`Warning: Error loading .env from current directory: ${cwdEnv.error.message}`);
+  }
+}
+
 
 const BANNER = `
   
