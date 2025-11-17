@@ -93,8 +93,8 @@ export class OpenRouterLLMService implements ILLMService {
         body: JSON.stringify({
           model: this.model,
           messages: messages,
-          temperature: 0.7,
-          max_tokens: 2048
+          temperature: 0.9,
+          max_tokens: 16384
         })
       });
 
