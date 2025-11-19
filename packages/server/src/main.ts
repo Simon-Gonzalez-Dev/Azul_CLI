@@ -108,13 +108,13 @@ async function loadConfig(): Promise<{ config: Config; configPath: string }> {
 async function main() {
   console.clear();
   console.log(BANNER);
-  console.log("Starting Azul...\n");
+  console.log("Starting Azul...");
 
   // Load configuration
   const { config, configPath } = await loadConfig();
   console.log(`   Configuration loaded`);
   console.log(`   Model: ${config.modelPath}`);
-  console.log(`   Context Size: ${config.contextSize}\n`);
+  console.log(`   Context Size: ${config.contextSize}`);
 
   // Initialize mode tracking
   let currentMode: "local" | "api" = "local";
@@ -345,9 +345,9 @@ async function main() {
 
   // Graceful shutdown
   const shutdown = async () => {
-    console.log("\n\n🛑 Shutting down...");
+    console.log("\n\n Shutting down...");
     await currentLLM.cleanup();
-    console.log("👋 Goodbye!");
+    console.log(" Goodbye!");
     process.exit(0);
   };
 

@@ -1,4 +1,4 @@
-import { getLlama, LlamaModel, LlamaContext, LlamaChatSession, TokenMeter } from "node-llama-cpp";
+import { getLlama, LlamaModel, LlamaContext, LlamaChatSession, TokenMeter, Token } from "node-llama-cpp";
 import { ChatMessage, ToolDefinition, TokenStats } from "./types.js";
 import { ILLMService } from "./llm-interface.js";
 import * as path from "path";
@@ -131,31 +131,37 @@ If you don't need to use any tools, respond with:
     const startTime = Date.now();
     let streamedOutputTokens = 0;
     let fullResponse = "";
-    let firstTokenReceived = false;
+    let streamedText = "";
+    let receivedStreamChunk = false;
 
     try {
-      // Use streaming callback to track token generation
-      // For local LLM, we'll send the full response when ready, but clear "thinking" quickly
+      // Use streaming callback to provide real-time updates via onTextChunk
       const response = await this.session.prompt(fullPrompt, {
         maxTokens: this.maxTokens,
         temperature: 0.7,
-        onToken: () => {
-          streamedOutputTokens++;
-          
-          // Clear "thinking" message on first token to provide immediate feedback
-          if (onToken && !firstTokenReceived) {
-            firstTokenReceived = true;
-            // Send empty string to signal that generation has started
-            // The UI will clear the "thinking" message
-            onToken("");
+        onTextChunk: (chunk: string) => {
+          if (!chunk) {
+            return;
           }
+          streamedText += chunk;
+          receivedStreamChunk = true;
+
+          if (onToken) {
+            onToken(streamedText);
+          }
+        },
+        onToken: (tokens: Token[]) => {
+          streamedOutputTokens += tokens.length;
         },
       });
 
       fullResponse = response;
-      
-      // Send the full response when ready
-      if (onToken && fullResponse) {
+
+      // Prefer the streamed text if it was captured
+      if (streamedText) {
+        fullResponse = streamedText;
+      } else if (onToken && fullResponse && !receivedStreamChunk) {
+        // If streaming didn't run (e.g., callback not provided), send the full response once
         onToken(fullResponse);
       }
 

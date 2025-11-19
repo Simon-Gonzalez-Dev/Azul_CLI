@@ -9,17 +9,18 @@ interface StatusBarProps {
   mode?: "local" | "api";
 }
 
-export const StatusBar: React.FC<StatusBarProps> = ({ 
-  connected, 
+export const StatusBar: React.FC<StatusBarProps> = ({
+  connected,
   modelName = "Qwen 2.5 Coder",
   tokenStats,
-  mode = "local"
+  mode = "local",
 }) => {
   const formatTokens = (tokens: number): string => {
-    if (tokens >= 1000000) {
-      return `${(tokens / 1000000).toFixed(1)}M`;
-    } else if (tokens >= 1000) {
-      return `${(tokens / 1000).toFixed(1)}K`;
+    if (tokens >= 1_000_000) {
+      return `${(tokens / 1_000_000).toFixed(1)}M`;
+    }
+    if (tokens >= 1_000) {
+      return `${(tokens / 1_000).toFixed(1)}K`;
     }
     return tokens.toString();
   };
@@ -38,37 +39,39 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   const formattedInputTokens = formatTokens(inputTokens);
   const formattedOutputTokens = formatTokens(outputTokens);
   const formattedCumulative = formatTokens(cumulativeTotal);
-
   const tokensPerSec = tokenStats.tokensPerSecond || 0;
+
+  const modeLabel =
+    mode === "api" ? "API • OpenRouter" : `Local • ${modelName}`;
 
   return (
     <Box
+      width="100%"
       paddingX={1}
+      paddingY={1}
       borderStyle="round"
-      borderColor={connected ? "green" : "red"}
-      justifyContent="space-between"
+      borderColor={connected ? "cyan" : "gray"}
+      flexDirection="column"
     >
-      <Box>
-        <Text bold color="cyan">
-          AZUL
+      <Box justifyContent="space-between" width="100%">
+        <Text>
+          <Text color="cyanBright" bold>
+            AZUL
+          </Text>
+          <Text dimColor> · Autonomous Coding Partner</Text>
         </Text>
-        <Text dimColor> | AI Coding Assistant </Text>
-        <Text color={mode === "api" ? "yellow" : "cyan"}>
-          [{mode === "api" ? "API" : "Local"}]
+        <Text color={connected ? "green" : "red"}>
+          {connected ? "● ONLINE" : "○ OFFLINE"}
         </Text>
       </Box>
-      <Box>
-        <Text dimColor>{modelName} | </Text>
-        <Text dimColor>
-          Ctx: {formattedPromptTokens} | In: {formattedInputTokens} | Out: {formattedOutputTokens} | Σ: {formattedCumulative} | 
+      <Box justifyContent="space-between" width="100%" marginTop={1}>
+        <Text color={mode === "api" ? "yellow" : "cyan"}>
+          {modeLabel}
         </Text>
-        {tokensPerSec > 0 && (
-          <Text dimColor>
-            {tokensPerSec.toFixed(1)} tok/s | 
-          </Text>
-        )}
-        <Text color={connected ? "green" : "red"}>
-          {connected ? "● Connected" : "○ Disconnected"}
+        <Text dimColor>
+          ctx {formattedPromptTokens} · in {formattedInputTokens} · out{" "}
+          {formattedOutputTokens} · Σ {formattedCumulative}
+          {tokensPerSec > 0 ? ` · ${tokensPerSec.toFixed(1)} tokens/s` : ""}
         </Text>
       </Box>
     </Box>
