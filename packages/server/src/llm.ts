@@ -131,23 +131,30 @@ If you don't need to use any tools, respond with:
     const startTime = Date.now();
     let streamedOutputTokens = 0;
     let fullResponse = "";
+    let firstTokenReceived = false;
 
     try {
-      // Optimize for fast response - use streaming callback to track tokens
+      // Use streaming callback to track token generation
+      // For local LLM, we'll send the full response when ready, but clear "thinking" quickly
       const response = await this.session.prompt(fullPrompt, {
         maxTokens: this.maxTokens,
         temperature: 0.7,
-        onToken: (tokens: number[]) => {
-          streamedOutputTokens += tokens.length;
-          // Note: For now, we use the full response for simplicity
-          // Streaming can be enhanced later once we verify the exact API
+        onToken: () => {
+          streamedOutputTokens++;
+          
+          // Clear "thinking" message on first token to provide immediate feedback
+          if (onToken && !firstTokenReceived) {
+            firstTokenReceived = true;
+            // Send empty string to signal that generation has started
+            // The UI will clear the "thinking" message
+            onToken("");
+          }
         },
       });
 
       fullResponse = response;
       
-      // If streaming callback was provided, call it immediately with full response
-      // This provides immediate feedback for faster perceived response time
+      // Send the full response when ready
       if (onToken && fullResponse) {
         onToken(fullResponse);
       }

@@ -82,6 +82,9 @@ export class OpenRouterLLMService implements ILLMService {
     }
 
     try {
+      // Use streaming if onToken callback is provided
+      const useStreaming = !!onToken;
+      
       const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -94,7 +97,8 @@ export class OpenRouterLLMService implements ILLMService {
           model: this.model,
           messages: messages,
           temperature: 0.9,
-          max_tokens: 16384
+          max_tokens: 16384,
+          stream: useStreaming
         })
       });
 
@@ -103,31 +107,112 @@ export class OpenRouterLLMService implements ILLMService {
         throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
       }
 
-      const data: any = await response.json();
-      const content = data.choices[0]?.message?.content || "";
+      let content = "";
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let totalTokens = 0;
 
-      // Update token stats if available
-      if (data.usage) {
-        this.totalInputTokens += data.usage.prompt_tokens || 0;
-        this.totalOutputTokens += data.usage.completion_tokens || 0;
-      }
+      if (useStreaming && response.body) {
+        // Handle streaming response (Server-Sent Events)
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
 
-      // Call onToken if provided (for streaming effect)
-      if (onToken && content) {
-        onToken(content);
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          // Process complete events (SSE format: "data: {...}\n\n")
+          // Events are separated by double newlines
+          let boundary = buffer.indexOf('\n\n');
+          while (boundary !== -1) {
+            const event = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+
+            // Parse SSE event - look for "data: " line
+            const lines = event.split('\n');
+            for (const line of lines) {
+              if (line.startsWith('data:')) {
+                const data = line.slice(5).trim();
+                
+                // Check for [DONE] marker
+                if (data === '[DONE]') {
+                  break;
+                }
+
+                if (!data) continue;
+
+                try {
+                  const json = JSON.parse(data);
+                  
+                  // Extract token content from delta
+                  const deltaContent = json.choices?.[0]?.delta?.content;
+                  if (deltaContent) {
+                    content += deltaContent;
+                    // Stream accumulated content
+                    if (onToken) {
+                      onToken(content);
+                    }
+                  }
+
+                  // Extract usage stats if available (usually in last chunk)
+                  if (json.usage) {
+                    inputTokens = json.usage.prompt_tokens || 0;
+                    outputTokens = json.usage.completion_tokens || 0;
+                    totalTokens = json.usage.total_tokens || 0;
+                  }
+                } catch (error) {
+                  // Skip invalid JSON chunks (might be empty or malformed)
+                  // Don't log warnings for empty chunks as they're common
+                  if (data && data !== '[DONE]') {
+                    console.warn("Failed to parse SSE chunk:", error, "Data:", data.substring(0, 100));
+                  }
+                }
+              }
+            }
+
+            boundary = buffer.indexOf('\n\n');
+          }
+        }
+
+        // Update cumulative token stats
+        if (inputTokens > 0 || outputTokens > 0) {
+          this.totalInputTokens += inputTokens;
+          this.totalOutputTokens += outputTokens;
+        }
+      } else {
+        // Non-streaming response (fallback)
+        const data: any = await response.json();
+        content = data.choices[0]?.message?.content || "";
+
+        // Update token stats if available
+        if (data.usage) {
+          inputTokens = data.usage.prompt_tokens || 0;
+          outputTokens = data.usage.completion_tokens || 0;
+          totalTokens = data.usage.total_tokens || 0;
+          
+          this.totalInputTokens += inputTokens;
+          this.totalOutputTokens += outputTokens;
+        }
+
+        // Call onToken if provided (for non-streaming, send full response)
+        if (onToken && content) {
+          onToken(content);
+        }
       }
 
       const endTime = Date.now();
       const generationTimeMs = endTime - startTime;
-      const outputTokens = data.usage?.completion_tokens || 0;
       const tokensPerSecond = outputTokens > 0 && generationTimeMs > 0
         ? outputTokens / (generationTimeMs / 1000)
         : 0;
 
       const stats: TokenStats = {
-        inputTokens: data.usage?.prompt_tokens || 0,
-        outputTokens: data.usage?.completion_tokens || 0,
-        totalTokens: data.usage?.total_tokens || 0,
+        inputTokens: inputTokens,
+        outputTokens: outputTokens,
+        totalTokens: totalTokens,
         tokensPerSecond: tokensPerSecond,
         generationTimeMs: generationTimeMs,
       };

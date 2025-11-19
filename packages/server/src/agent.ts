@@ -121,21 +121,29 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         this.systemPrompt,
         this.conversationHistory,
         tools,
-        (token: string) => {
+        (accumulatedText: string) => {
           // Stream tokens for faster time-to-first-token
+          // The callback receives accumulated text (all tokens so far)
+          // Empty string means generation started (for local LLM)
           if (isFirstToken) {
             isFirstToken = false;
-            // Clear thinking message when first token arrives
+            // Clear thinking message when first token/generation starts
             this.sendMessage({
               type: "agent_thinking",
               content: "",
             });
           }
-          this.streamingResponse += token;
-          this.sendMessage({
-            type: "agent_response_stream",
-            content: this.streamingResponse,
-          });
+          
+          // Only send streaming message if we have content
+          // (empty string is just a signal to clear "thinking")
+          if (accumulatedText) {
+            // Update streaming response with accumulated text
+            this.streamingResponse = accumulatedText;
+            this.sendMessage({
+              type: "agent_response_stream",
+              content: accumulatedText,
+            });
+          }
         }
       );
 
