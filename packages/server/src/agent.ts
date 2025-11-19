@@ -116,6 +116,20 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
 
       this.streamingResponse = "";
       let isFirstToken = true;
+      const STREAM_MIN_CHARS = 32;
+      const STREAM_INTERVAL_MS = 80;
+      let lastStreamLength = 0;
+      let lastStreamTime = 0;
+
+      const flushStream = (content: string) => {
+        this.streamingResponse = content;
+        lastStreamLength = content.length;
+        lastStreamTime = Date.now();
+        this.sendMessage({
+          type: "agent_response_stream",
+          content,
+        });
+      };
 
       const { response, stats } = await this.llm.getCompletion(
         this.systemPrompt,
@@ -134,18 +148,23 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
             });
           }
           
-          // Only send streaming message if we have content
-          // (empty string is just a signal to clear "thinking")
-          if (accumulatedText) {
-            // Update streaming response with accumulated text
-            this.streamingResponse = accumulatedText;
-            this.sendMessage({
-              type: "agent_response_stream",
-              content: accumulatedText,
-            });
+          // Only send streaming message if we have content and enough new text
+          if (accumulatedText && accumulatedText.length > lastStreamLength) {
+            const now = Date.now();
+            const sizeDelta = accumulatedText.length - lastStreamLength;
+            const timeDelta = now - lastStreamTime;
+
+            if (sizeDelta >= STREAM_MIN_CHARS || timeDelta >= STREAM_INTERVAL_MS) {
+              flushStream(accumulatedText);
+            }
           }
         }
       );
+
+      // Ensure the final streamed content is flushed (handles short endings)
+      if (response && response.length > lastStreamLength) {
+        flushStream(response);
+      }
 
       const totalStats = this.llm.getTokenStats();
       this.sendMessage({
