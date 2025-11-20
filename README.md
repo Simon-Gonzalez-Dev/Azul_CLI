@@ -4,10 +4,10 @@ Azul is a powerful, locally-run AI coding assistant with a terminal-based UI. Bu
 
 ## Features
 
-- 🤖 **Local AI Processing** - Uses Qwen 2.5 Coder model via llama.cpp (no cloud dependencies)
-- 🖥️ **Terminal UI** - Beautiful terminal interface built with React and Ink
-- 🛠️ **Tool System** - File operations, shell commands, and search capabilities
-- 🔒 **Permission System** - Approval flow for potentially destructive operations
+- **Local AI Processing** - Uses Qwen 2.5 Coder model via llama.cpp (no cloud dependencies)
+- **Terminal UI** - Beautiful terminal interface built with React and Ink
+- **Tool System** - File operations, shell commands, and search capabilities
+- **Permission System** - Approval flow for potentially destructive operations
 - ⚡ **Real-time Communication** - WebSocket-based client-server architecture
 
 ## Architecture
