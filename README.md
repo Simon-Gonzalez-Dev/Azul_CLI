@@ -8,7 +8,7 @@ Azul is a powerful, locally-run AI coding assistant with a terminal-based UI. Bu
 - **Terminal UI** - Beautiful terminal interface built with React and Ink
 - **Tool System** - File operations, shell commands, and search capabilities
 - **Permission System** - Approval flow for potentially destructive operations
-- ⚡ **Real-time Communication** - WebSocket-based client-server architecture
+- **Real-time Communication** - WebSocket-based client-server architecture
 
 ## Architecture
 
@@ -16,7 +16,7 @@ Azul is a powerful, locally-run AI coding assistant with a terminal-based UI. Bu
   - `packages/server` - Express backend with LLM and agent logic
   - `packages/ui` - React/Ink terminal interface
 - **Tech Stack**: TypeScript, React, Ink, Express, WebSocket, node-llama-cpp
-- **Model**: Qwen 2.5 Coder 7B (quantized GGUF format)
+- **Model**: You can use any model of your liking in GUFF FORMAT (for a MacbookPro M4 I recommend: Qwen 2.5 Coder 7B (quantized GGUF format))
 
 ## Prerequisites
 
@@ -67,7 +67,7 @@ azul
 Edit `config.json` in the project root:
 ```json
 {
-  "modelPath": "./models/qwen2.5-coder-7b-instruct-q4_k_m.gguf",
+  "modelPath": "./models/qwen2.5-coder-7b-instruct-q4_k_m.gguf", **THIS IS AN EXEMPLE CHANGE THE MODEL PATH**
   "port": 3737,
   "contextSize": 8192,
   "maxTokens": 2048
@@ -151,7 +151,7 @@ npm run clean
 
 ### Model fails to load
 - Ensure the model file exists at the path specified in `config.json`
-- Check you have enough RAM (7B Q4 model needs ~5-6GB)
+- Check you have enough VRAM (7B Q4 model needs ~5-6GB)
 - Verify the model file is not corrupted
 
 ### Port already in use
