@@ -98,8 +98,8 @@ async function loadConfig(): Promise<{ config: Config; configPath: string }> {
   return {
     config: {
       modelPath: "./models/qwen2.5-coder-7b-instruct-q4_k_m.gguf",
-      contextSize: 8192,
-      maxTokens: 2048,
+      contextSize: 16384,
+      maxTokens: 16384,
     },
     configPath: packageRoot,
   };

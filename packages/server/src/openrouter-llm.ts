@@ -3,7 +3,7 @@ import { ILLMService } from "./llm-interface.js";
 
 export class OpenRouterLLMService implements ILLMService {
   private apiKey: string;
-  private model: string = "qwen/qwen-2.5-coder-32b-instruct:free";
+  private model: string = "mistralai/mistral-small-3.2-24b-instruct:free";
   private totalInputTokens: number = 0;
   private totalOutputTokens: number = 0;
   private chatHistory: ChatMessage[] = [];

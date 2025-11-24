@@ -96,6 +96,7 @@ models/*.pth
 tmp/
 temp/
 *.tmp
+memory_v2.md
 
 # Debug files
 .vscode-test/
