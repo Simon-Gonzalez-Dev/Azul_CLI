@@ -39,35 +39,61 @@ export class Agent {
   }
 
   private initializeSystemPrompt(): void {
-    this.systemPrompt = `You are Azul, an AI coding assistant running locally. You help users with coding tasks by analyzing files, executing commands, and providing solutions.
+    this.systemPrompt = `You are Azul, an elite autonomous coding agent with direct CLI and Filesystem access. 
+Your goal is to complete programming tasks efficiently, accurately, and with minimal token usage.
 
-You have access to tools that let you interact with the filesystem and execute shell commands. Use these tools to help the user effectively.
+# CORE OPERATING RULES
 
-CRITICAL - File Operations:
-- When the user asks you to create, update, or modify a file, you MUST use the write_file tool
-- Do NOT just show the code in your response - actually write it to the file using the tool
-- After writing a file, the tool will show you a diff of changes
-- Always use the write_file tool when generating or updating code files
+1. **ACTION OVER CHATTER**: 
+   - Do NOT describe code changes in the chat before making them. 
+   - Do NOT output "Here is the code:" followed by a block of code if you intend to use a tool to write it immediately after. 
+   - **JUST CALL THE TOOL.**
 
-IMPORTANT - Tool Usage Pattern:
-1. When you need to use a tool, respond with a JSON object containing "tool_calls" array
-2. After you make a tool call, you will receive a "Tool Result" message showing the outcome
-3. Read the tool result carefully - if it shows success, your task may be complete
-4. If the tool result shows success, provide a final response to the user explaining what was done
-5. Only make additional tool calls if the previous ones failed or if more work is needed
+2. **EXPLORE FIRST**: 
+   - Never guess file paths or contents. 
+   - Always start by mapping the territory using *ls* (list_dir) and *read_file*. 
+   - If a file doesn't exist, verify the directory structure before creating it.
 
-When responding, think step by step:
-1. Understand what the user is asking
-2. Determine which tools (if any) you need to use
-3. Execute the tools (especially write_file for code changes!)
-4. Review the tool results
-5. Provide a helpful final response to the user
+3. **SURGICAL EDITING (The "Patch" Protocol)**:
+   - **PREFER *edit_file* (Search & Replace) over *write_file***.
+   - *write_file* overwrites the ENTIRE file. Only use it for creating new files or very small files (<50 lines).
+   - For existing files, locate the unique block of code you want to change and provide a replacement.
+   - The *search* block must be sufficient to be unique, but minimal enough to save tokens.
 
-Always be concise and helpful. Format code blocks with proper syntax highlighting.`;
+4. **VERIFICATION**:
+   - After editing code, you are encouraged to run linter checks, build commands, or tests via *run_shell* to verify your changes worked.
+   - If a tool fails, read the error, analyze the cause, and self-correct.
+
+# TOOL USAGE GUIDELINES
+
+You have access to a suite of native tools. You must use them to interact with the environment.
+
+## 1. *ls* (List Files)
+   - Use this frequently to understand the directory structure.
+   - Don't assume standard paths (e.g., *src/* vs *app/*). Check first.
+
+## 2. *read_file*
+   - Read file contents to understand logic.
+   - For massive files, read relevant chunks if possible, or read the whole file if you need full context.
+
+## 3. *edit_file* (Search & Replace)
+   - **Input:** *path*, *search_block*, *replace_block*.
+   - **Constraint:** The *search_block* must match the file content EXACTLY (including whitespace).
+   - **Strategy:** Copy-paste the *search_block* from a previous *read_file* output to ensure exact matching.
+
+## 4. *run_shell*
+   - Execute shell commands (git, npm, python, etc.).
+   - NOTE: You cannot use interactive tools like *nano*, *vim*, or *npm init* that require keyboard input.
+   - Use *grep* or *find* for large scale searches instead of reading every file.
+
+# RESPONSE FORMATTING
+
+- **When Thinking:** If you need to plan, you may output a short "Thought" before a tool call, but keep it brief (1-2 sentences).
+- **When Acting:** Issue the Tool Call immediately.
+- **When Finished:** Only address the User when the task is complete or you need clarification. `;
   }
 
   async handleUserMessage(content: string): Promise<void> {
-    // All commands are handled in the UI layer - this only processes regular user messages
     this.currentLoopCount = 0;
     this.conversationHistory.push({
       role: "user",
@@ -131,24 +157,19 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         });
       };
 
-      const { response, stats } = await this.llm.getCompletion(
+      const { response, toolCalls, stats } = await this.llm.getCompletion(
         this.systemPrompt,
         this.conversationHistory,
         tools,
         (accumulatedText: string) => {
-          // Stream tokens for faster time-to-first-token
-          // The callback receives accumulated text (all tokens so far)
-          // Empty string means generation started (for local LLM)
           if (isFirstToken) {
             isFirstToken = false;
-            // Clear thinking message when first token/generation starts
             this.sendMessage({
               type: "agent_thinking",
               content: "",
             });
           }
           
-          // Only send streaming message if we have content and enough new text
           if (accumulatedText && accumulatedText.length > lastStreamLength) {
             const now = Date.now();
             const sizeDelta = accumulatedText.length - lastStreamLength;
@@ -161,7 +182,7 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         }
       );
 
-      // Ensure the final streamed content is flushed (handles short endings)
+      // Ensure the final streamed content is flushed
       if (response && response.length > lastStreamLength) {
         flushStream(response);
       }
@@ -179,44 +200,69 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         },
       });
 
-      const parsedResponse = this.parseResponse(response);
-
-      if (parsedResponse.thought) {
-        this.sendMessage({
-          type: "agent_thought",
-          content: parsedResponse.thought,
+      // Handle native tool calls (from Groq API)
+      if (toolCalls && toolCalls.length > 0) {
+        // Add assistant message with tool calls to history
+        this.conversationHistory.push({
+          role: "assistant",
+          content: response || null, // Can be null when only tool calls are present
+          tool_calls: toolCalls,
         });
+
+        // Execute tools silently
+        await this.executeToolCalls(toolCalls);
+        
+        // Loop continues automatically with tool results
+        await this.runAgentLoop();
+        return;
       }
 
-      if (parsedResponse.tool_calls && parsedResponse.tool_calls.length > 0) {
-        // Add assistant's tool call decision to history
-        this.conversationHistory.push({
-          role: "assistant",
-          content: parsedResponse.thought || "I'll use tools to complete this task.",
-          tool_calls: parsedResponse.tool_calls,
-        });
-        
-        await this.executeToolCalls(parsedResponse.tool_calls);
-        await this.runAgentLoop();
-      } else if (parsedResponse.response) {
+      // Handle text response (no tools)
+      if (response) {
         this.sendMessage({
           type: "agent_response",
-          content: parsedResponse.response,
+          content: response,
         });
 
         this.conversationHistory.push({
           role: "assistant",
-          content: parsedResponse.response,
+          content: response,
         });
       } else {
-        this.sendMessage({
-          type: "agent_response",
-          content: response,
-        });
-        this.conversationHistory.push({
-          role: "assistant",
-          content: response,
-        });
+        // Fallback: try parsing JSON response (for local LLM that doesn't support native tools)
+        const parsedResponse = this.parseResponse(this.streamingResponse || response);
+        
+        if (parsedResponse.tool_calls && parsedResponse.tool_calls.length > 0) {
+          this.conversationHistory.push({
+            role: "assistant",
+            content: parsedResponse.thought || "I'll use tools to complete this task.",
+            tool_calls: parsedResponse.tool_calls,
+          });
+          
+          await this.executeToolCalls(parsedResponse.tool_calls);
+          await this.runAgentLoop();
+        } else if (parsedResponse.response) {
+          this.sendMessage({
+            type: "agent_response",
+            content: parsedResponse.response,
+          });
+
+          this.conversationHistory.push({
+            role: "assistant",
+            content: parsedResponse.response,
+          });
+        } else {
+          // Fallback to raw response
+          const finalResponse = this.streamingResponse || response || "I'm ready to help.";
+          this.sendMessage({
+            type: "agent_response",
+            content: finalResponse,
+          });
+          this.conversationHistory.push({
+            role: "assistant",
+            content: finalResponse,
+          });
+        }
       }
     } catch (error: any) {
       console.error("Error in agent loop:", error);
@@ -258,7 +304,6 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
           message: `Unknown tool: ${toolCall.name}`,
         });
         
-        // Add error result to history as tool message
         this.conversationHistory.push({
           role: "tool",
           content: JSON.stringify({ success: false, error: `Unknown tool: ${toolCall.name}` }),
@@ -269,16 +314,17 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
 
       // Resolve paths relative to working directory for file operations
       const resolvedArgs = { ...toolCall.arguments };
-      if (toolCall.name === "read_file" || toolCall.name === "write_file" || toolCall.name === "list_dir") {
+      if (toolCall.name === "read_file" || toolCall.name === "write_file" || toolCall.name === "edit_file" || toolCall.name === "list_dir") {
         if (resolvedArgs.path && !path.isAbsolute(resolvedArgs.path)) {
           resolvedArgs.path = path.resolve(this.workingDirectory, resolvedArgs.path);
         }
       }
 
+      // Show status instead of full tool details (Silent Actor pattern)
       this.sendMessage({
         type: "tool_call",
         tool: toolCall.name,
-        args: resolvedArgs,
+        args: { status: `Running ${toolCall.name}...` }, // Don't show full args
       });
 
       if (tool.requiresApproval) {
@@ -289,10 +335,9 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
           this.sendMessage({
             type: "tool_result",
             tool: toolCall.name,
-            result,
+            result: { success: false, message: "User denied approval" }, // Minimal result
           });
           
-          // Add denial result to history as tool message
           this.conversationHistory.push({
             role: "tool",
             content: JSON.stringify(result),
@@ -302,16 +347,25 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         }
       }
 
-        try {
-          const result = await tool.execute(resolvedArgs);
+      try {
+        const result = await tool.execute(resolvedArgs);
         
+        // Show minimal result (Silent Actor pattern)
         this.sendMessage({
           type: "tool_result",
           tool: toolCall.name,
-          result,
+          result: {
+            success: result.success,
+            message: result.message || (result.success ? "Completed successfully" : result.error),
+            // Only show diff for file operations, not full content
+            diff: result.diff,
+            added: result.added,
+            removed: result.removed,
+            filePath: result.filePath,
+          },
         });
 
-        // Add tool result to history with "tool" role - this is critical for the loop!
+        // Add full tool result to history for LLM context
         this.conversationHistory.push({
           role: "tool",
           content: JSON.stringify(result),
@@ -322,10 +376,9 @@ Always be concise and helpful. Format code blocks with proper syntax highlightin
         this.sendMessage({
           type: "tool_result",
           tool: toolCall.name,
-          result,
+          result: { success: false, message: error.message },
         });
 
-        // Add error result to history as tool message
         this.conversationHistory.push({
           role: "tool",
           content: JSON.stringify(result),

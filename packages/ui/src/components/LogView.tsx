@@ -41,60 +41,69 @@ export const LogView: React.FC<LogViewProps> = ({ messages }) => {
         );
 
       case "tool_call":
+        // Silent Actor pattern: Show minimal status, not full details
         const toolArgs = message.args || {};
-        // Special formatting for write_file tool
+        if (toolArgs.status) {
+          // New format: just show status
+          return (
+            <Box key={index} marginY={0}>
+              <Text color="blue" dimColor>
+                {toolArgs.status}
+              </Text>
+            </Box>
+          );
+        }
+        // Fallback for old format (backwards compatibility)
         if (message.tool === "write_file" && toolArgs.path) {
           return (
-            <Box key={index} marginY={0} flexDirection="column">
-              <Text color="blue" bold>
+            <Box key={index} marginY={0}>
+              <Text color="blue" dimColor>
                 Writing file: {toolArgs.path}
-              </Text>
-              <Text dimColor>
-                Content length: {toolArgs.content?.length || 0} characters
               </Text>
             </Box>
           );
         }
         return (
           <Box key={index} marginY={0}>
-            <Text color="blue">
-               Calling tool: {message.tool}
+            <Text color="blue" dimColor>
+              Running {message.tool}...
             </Text>
-            {Object.keys(toolArgs).length > 0 && (
-              <Text dimColor> {JSON.stringify(toolArgs, null, 2)}</Text>
-            )}
           </Box>
         );
 
       case "tool_result":
         const result = message.result || {};
-        // Show diff if available (file write/update)
-        if (result.diff && result.success) {
-          return (
-            <Box key={index} marginY={0} flexDirection="column">
-              <Text color="green" bold>
-                ✓ {result.message || "Tool executed successfully"}
-              </Text>
-              <DiffView
-                diff={result.diff}
-                added={result.added}
-                removed={result.removed}
-                filePath={result.filePath}
-              />
-            </Box>
-          );
-        }
-        // Show success/error message
+        // Silent Actor pattern: Show minimal feedback
         if (result.success) {
+          // Show diff if available (for file edits)
+          if (result.diff && result.filePath) {
+            return (
+              <Box key={index} marginY={0} flexDirection="column">
+                <Text color="green" dimColor>
+                  ✓ {result.message || "Updated"}
+                </Text>
+                <DiffView
+                  diff={result.diff}
+                  added={result.added}
+                  removed={result.removed}
+                  filePath={result.filePath}
+                />
+              </Box>
+            );
+          }
+          // Minimal success message
           return (
             <Box key={index} marginY={0}>
-              <Text color="green">✓ {result.message || JSON.stringify(result)}</Text>
+              <Text color="green" dimColor>
+                ✓ {result.message || "Completed"}
+              </Text>
             </Box>
           );
         }
+        // Show error (errors are important to see)
         return (
-          <Box key={index} marginY={0} flexDirection="column">
-            <Text color="red">✗ Error: {result.error || JSON.stringify(result)}</Text>
+          <Box key={index} marginY={0}>
+            <Text color="red">✗ {result.message || result.error || "Failed"}</Text>
           </Box>
         );
 

@@ -1,5 +1,5 @@
 import { getLlama, LlamaModel, LlamaContext, LlamaChatSession, TokenMeter, Token } from "node-llama-cpp";
-import { ChatMessage, ToolDefinition, TokenStats } from "./types.js";
+import { ChatMessage, ToolDefinition, TokenStats, ToolCall } from "./types.js";
 import { ILLMService } from "./llm-interface.js";
 import * as path from "path";
 
@@ -59,7 +59,7 @@ export class LLMService implements ILLMService {
     conversationHistory: ChatMessage[],
     tools?: ToolDefinition[],
     onToken?: (token: string) => void
-  ): Promise<{ response: string; stats: TokenStats }> {
+  ): Promise<{ response: string; toolCalls?: ToolCall[]; stats: TokenStats }> {
     if (!this.session || !this.model) {
       throw new Error("LLM not initialized. Call initialize() first.");
     }
@@ -113,7 +113,7 @@ If you don't need to use any tools, respond with:
           fullPrompt += `\n\nAssistant: ${msg.content || "I'll use tools to help."}`;
           fullPrompt += `\n\nTool calls: ${JSON.stringify(msg.tool_calls)}`;
         } else {
-          fullPrompt += `\n\nAssistant: ${msg.content}`;
+          fullPrompt += `\n\nAssistant: ${msg.content || ""}`;
         }
       } else if (msg.role === "tool") {
         // Tool execution result - critical for the agent to know what happened
@@ -191,7 +191,8 @@ If you don't need to use any tools, respond with:
         contextTokens: sequence.contextTokens.length,
       };
 
-      return { response: fullResponse, stats };
+      // Local LLM doesn't support native function calling, so toolCalls will be parsed by agent
+      return { response: fullResponse, toolCalls: undefined, stats };
     } catch (error) {
       console.error("Error generating completion:", error);
       throw error;

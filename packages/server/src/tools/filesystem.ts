@@ -203,3 +203,63 @@ export const listDirTool: ToolDefinition = {
     }
   },
 };
+
+export const editFileTool: ToolDefinition = {
+  name: "edit_file",
+  description: "Replace a unique block of text with a new block. Use this for surgical file edits instead of rewriting entire files. This is more efficient and safer than write_file.",
+  parameters: {
+    type: "object",
+    properties: {
+      path: {
+        type: "string",
+        description: "The path to the file to edit",
+      },
+      search: {
+        type: "string",
+        description: "The exact unique code block to locate (must match exactly including whitespace)",
+      },
+      replace: {
+        type: "string",
+        description: "The new code block to insert in place of the search block",
+      },
+    },
+    required: ["path", "search", "replace"],
+  },
+  requiresApproval: true,
+  async execute(args: { path: string; search: string; replace: string }) {
+    try {
+      const content = await fs.readFile(args.path, 'utf-8');
+
+      // Normalizing line endings is crucial for AI matching
+      const normalizedContent = content.replace(/\r\n/g, '\n');
+      const normalizedSearch = args.search.replace(/\r\n/g, '\n');
+
+      if (normalizedContent.includes(normalizedSearch)) {
+        // Perform replacement
+        const newContent = normalizedContent.replace(normalizedSearch, args.replace);
+        await fs.writeFile(args.path, newContent, 'utf-8');
+        
+        // Compute diff for display
+        const diff = computeDiff(normalizedSearch, args.replace);
+        
+        return { 
+          success: true, 
+          message: "Patch applied successfully.",
+          filePath: args.path,
+          diff: diff.diff,
+          added: diff.added,
+          removed: diff.removed,
+        };
+      } else {
+        // Smart Failure: Help the AI fix its mistake
+        return { 
+          success: false, 
+          error: "Search block not found. Ensure whitespace matches exactly or use `read_file` to verify context.",
+          suggestion: "Read the file first to see the exact formatting and whitespace."
+        };
+      }
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  },
+};

@@ -1,5 +1,5 @@
 import Groq from "groq-sdk";
-import { ChatMessage, ToolDefinition, TokenStats } from "./types.js";
+import { ChatMessage, ToolDefinition, TokenStats, ToolCall } from "./types.js";
 import { ILLMService } from "./llm-interface.js";
 
 export class GroqLLMService implements ILLMService {
@@ -52,47 +52,85 @@ export class GroqLLMService implements ILLMService {
     this.chatHistory = [];
   }
 
+  // Convert ToolDefinition[] to Groq's native tools format
+  private convertToolsToGroqFormat(tools?: ToolDefinition[]): any[] | undefined {
+    if (!tools || tools.length === 0) {
+      return undefined;
+    }
+
+    return tools.map(tool => ({
+      type: 'function' as const,
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      },
+    }));
+  }
+
+  // Convert Groq's tool_calls to our ToolCall format
+  private convertGroqToolCalls(groqToolCalls: any[]): ToolCall[] {
+    return groqToolCalls.map(tc => ({
+      id: tc.id,
+      name: tc.function.name,
+      arguments: JSON.parse(tc.function.arguments || '{}'),
+    }));
+  }
+
+  // Convert ChatMessage[] to Groq's message format
+  private convertMessagesToGroqFormat(messages: ChatMessage[]): any[] {
+    return messages.map(msg => {
+      if (msg.role === 'tool') {
+        // Groq uses 'tool' role with tool_call_id
+        return {
+          role: 'tool' as const,
+          content: msg.content,
+          tool_call_id: msg.tool_call_id,
+        };
+      } else if (msg.role === 'assistant' && msg.tool_calls) {
+        // Assistant message with tool calls
+        return {
+          role: 'assistant' as const,
+          content: msg.content || null,
+          tool_calls: msg.tool_calls.map(tc => ({
+            id: tc.id || `call_${Math.random().toString(36).substring(2, 15)}`,
+            type: 'function' as const,
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.arguments),
+            },
+          })),
+        };
+      } else {
+        // Regular user or assistant message
+        return {
+          role: msg.role,
+          content: msg.content,
+        };
+      }
+    });
+  }
+
   async getCompletion(
     systemPrompt: string,
     conversationHistory: ChatMessage[],
     tools?: ToolDefinition[],
     onToken?: (token: string) => void
-  ): Promise<{ response: string; stats: TokenStats }> {
+  ): Promise<{ response: string; toolCalls?: ToolCall[]; stats: TokenStats }> {
     const startTime = Date.now();
 
     // Build messages array for Groq API
     const messages: any[] = [
-      { role: "system", content: this.buildSystemPrompt(systemPrompt, tools) }
+      { role: "system", content: systemPrompt },
+      ...this.convertMessagesToGroqFormat(conversationHistory),
     ];
 
-    // Add conversation history
-    for (const msg of conversationHistory) {
-      if (msg.role === "tool") {
-        // Groq uses different format for tool responses
-        // We'll encode it as a user message with context
-        messages.push({
-          role: "user",
-          content: `[Tool Result: ${msg.tool_call_id}]\n${msg.content}`
-        });
-      } else if (msg.role === "assistant" && msg.tool_calls) {
-        // Format tool calls as assistant message
-        messages.push({
-          role: "assistant",
-          content: JSON.stringify({
-            thought: "Using tools to complete the task",
-            tool_calls: msg.tool_calls
-          })
-        });
-      } else {
-        messages.push({
-          role: msg.role,
-          content: msg.content
-        });
-      }
-    }
+    // Convert tools to Groq format
+    const groqTools = this.convertToolsToGroqFormat(tools);
 
     try {
       let content = "";
+      let toolCalls: ToolCall[] | undefined = undefined;
       let inputTokens = 0;
       let outputTokens = 0;
       let totalTokens = 0;
@@ -108,26 +146,54 @@ export class GroqLLMService implements ILLMService {
           top_p: 1,
           stop: null,
           stream: true,
+          tools: groqTools,
+          tool_choice: groqTools ? 'auto' : undefined,
         });
 
         let accumulatedContent = "";
+        let accumulatedToolCalls: any[] = [];
+        
         for await (const chunk of stream) {
-          const deltaContent = chunk.choices?.[0]?.delta?.content;
-          if (deltaContent) {
-            accumulatedContent += deltaContent;
+          const delta = chunk.choices?.[0]?.delta;
+          
+          // Handle content delta
+          if (delta?.content) {
+            accumulatedContent += delta.content;
             content = accumulatedContent;
-            // Stream accumulated content
             onToken(content);
           }
 
+          // Handle tool calls delta
+          if (delta?.tool_calls) {
+            for (const toolCallDelta of delta.tool_calls) {
+              const index = toolCallDelta.index || 0;
+              if (!accumulatedToolCalls[index]) {
+                accumulatedToolCalls[index] = {
+                  id: toolCallDelta.id || '',
+                  type: 'function',
+                  function: { name: '', arguments: '' },
+                };
+              }
+              if (toolCallDelta.id) {
+                accumulatedToolCalls[index].id = toolCallDelta.id;
+              }
+              if (toolCallDelta.function?.name) {
+                accumulatedToolCalls[index].function.name = toolCallDelta.function.name;
+              }
+              if (toolCallDelta.function?.arguments) {
+                accumulatedToolCalls[index].function.arguments += toolCallDelta.function.arguments;
+              }
+            }
+          }
+
+          // Extract usage stats if available (usually in last chunk)
           // Note: Groq streaming chunks don't include usage stats
-          // We'll estimate tokens or leave them at 0 for streaming
-          // Usage stats are only available in non-streaming responses
         }
 
-        // For streaming, we don't have usage stats from the API
-        // You could estimate tokens here if needed, but we'll leave them at 0
-        // The cumulative stats won't be updated for streaming responses
+        // Convert accumulated tool calls
+        if (accumulatedToolCalls.length > 0) {
+          toolCalls = this.convertGroqToolCalls(accumulatedToolCalls);
+        }
       } else {
         // Non-streaming response
         const data = await this.groq.chat.completions.create({
@@ -138,9 +204,17 @@ export class GroqLLMService implements ILLMService {
           top_p: 1,
           stop: null,
           stream: false,
+          tools: groqTools,
+          tool_choice: groqTools ? 'auto' : undefined,
         });
 
-        content = data.choices?.[0]?.message?.content || "";
+        const choice = data.choices?.[0];
+        content = choice?.message?.content || "";
+
+        // Extract tool calls if present
+        if (choice?.message?.tool_calls && choice.message.tool_calls.length > 0) {
+          toolCalls = this.convertGroqToolCalls(choice.message.tool_calls);
+        }
 
         // Update token stats if available
         if (data.usage) {
@@ -167,7 +241,7 @@ export class GroqLLMService implements ILLMService {
         generationTimeMs: generationTimeMs,
       };
 
-      return { response: content, stats };
+      return { response: content, toolCalls, stats };
     } catch (error: any) {
       console.error("Error calling Groq API:", error);
       let errorMessage = `Groq API error: ${error.message || error}`;
@@ -182,42 +256,4 @@ export class GroqLLMService implements ILLMService {
       throw new Error(errorMessage);
     }
   }
-
-  private buildSystemPrompt(systemPrompt: string, tools?: ToolDefinition[]): string {
-    let fullSystemPrompt = systemPrompt;
-
-    if (tools && tools.length > 0) {
-      fullSystemPrompt += "\n\nYou have access to the following tools:\n\n";
-      tools.forEach(tool => {
-        fullSystemPrompt += `### ${tool.name}\n`;
-        fullSystemPrompt += `Description: ${tool.description}\n`;
-        fullSystemPrompt += `Parameters: ${JSON.stringify(tool.parameters, null, 2)}\n\n`;
-      });
-
-      fullSystemPrompt += `\nTo use a tool, respond with a JSON object in this format:
-{
-  "thought": "Your reasoning about what to do",
-  "tool_calls": [
-    {
-      "name": "tool_name",
-      "arguments": { "param1": "value1" }
-    }
-  ]
 }
-
-IMPORTANT:
-- When the user asks you to create, update, or modify a file, you MUST use the write_file tool
-- Do NOT just show the code in your response - actually call the write_file tool
-- Extract code from markdown blocks before writing (remove \`\`\` markers)
-
-If you don't need to use any tools, respond with:
-{
-  "thought": "Your response",
-  "response": "Your answer to the user"
-}`;
-    }
-
-    return fullSystemPrompt;
-  }
-}
-

@@ -1,6 +1,6 @@
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string;
+  content: string | null; // Can be null for assistant messages with tool calls
   tool_call_id?: string; // For tool role messages
   tool_calls?: ToolCall[]; // For assistant messages with tool calls
 }
