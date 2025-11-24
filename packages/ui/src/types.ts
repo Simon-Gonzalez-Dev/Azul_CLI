@@ -17,6 +17,9 @@ export interface ApprovalRequest {
   requestId: string;
   tool: string;
   args: any;
+  diff?: string;
+  added?: number;
+  removed?: number;
 }
 
 export interface TokenStats {

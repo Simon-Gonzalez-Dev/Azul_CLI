@@ -1,6 +1,7 @@
 import React from "react";
 import { Box, Text, useInput } from "ink";
 import { ApprovalRequest } from "../types.js";
+import { DiffView } from "./DiffView.js";
 
 interface PermissionModalProps {
   approval: ApprovalRequest;
@@ -40,6 +41,18 @@ export const PermissionModal: React.FC<PermissionModalProps> = ({
       <Text> </Text>
       <Text dimColor>Arguments:</Text>
       <Text>{JSON.stringify(approval.args, null, 2)}</Text>
+      
+      {approval.diff && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold>Proposed Changes:</Text>
+          <DiffView 
+            diff={approval.diff} 
+            added={approval.added} 
+            removed={approval.removed} 
+          />
+        </Box>
+      )}
+      
       <Text> </Text>
       <Box>
         <Text color="green">Y</Text>

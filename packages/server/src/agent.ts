@@ -1,7 +1,9 @@
 import * as path from "path";
+import * as fs from "fs/promises";
 import { ILLMService } from "./llm-interface.js";
 import { ChatMessage, ToolCall, ToolDefinition } from "./types.js";
 import { tools, getToolByName } from "./tools/index.js";
+import { computeDiff } from "./tools/filesystem.js";
 
 export type MessageCallback = (message: {
   type: string;
@@ -253,53 +255,48 @@ When calling tools, you MUST provide ALL required parameters. The tool system wi
         return;
       }
 
-      // Handle text response (no tools)
-      if (response) {
-        this.sendMessage({
-          type: "agent_response",
-          content: response,
-        });
+      // Attempt to parse the response as JSON (for local models or Groq falling back to text)
+      // This handles the case where the model outputs ```json ... ```
+      // IMPORTANT: We must try to parse BEFORE treating it as plain text
+      const parsedResponse = this.parseResponse(response || this.streamingResponse || "");
 
+      if (parsedResponse.error) {
+         // If it looks like it WAS trying to be JSON (had braces) but failed
+         if ((response || "").includes("```json") || (response || "").trim().startsWith("{")) {
+             console.warn("JSON Parse Error:", parsedResponse.error);
+             this.conversationHistory.push({
+               role: "user", 
+               content: `System Error: Invalid JSON format. Please output RAW JSON only, no markdown. Error: ${parsedResponse.error}`
+             });
+             await this.runAgentLoop();
+             return;
+         }
+         // Otherwise, treat as normal text (fall through)
+      } else if (parsedResponse.tool_calls && parsedResponse.tool_calls.length > 0) {
+        // We successfully parsed tool calls from the text response
         this.conversationHistory.push({
           role: "assistant",
-          content: response,
+          content: parsedResponse.thought || "I'll use tools to complete this task.",
+          tool_calls: parsedResponse.tool_calls,
         });
-      } else {
-        // Fallback: try parsing JSON response (for local LLM that doesn't support native tools)
-        const parsedResponse = this.parseResponse(this.streamingResponse || response);
         
-        if (parsedResponse.tool_calls && parsedResponse.tool_calls.length > 0) {
-          this.conversationHistory.push({
-            role: "assistant",
-            content: parsedResponse.thought || "I'll use tools to complete this task.",
-            tool_calls: parsedResponse.tool_calls,
-          });
-          
-          await this.executeToolCalls(parsedResponse.tool_calls);
-          await this.runAgentLoop();
-        } else if (parsedResponse.response) {
-          this.sendMessage({
-            type: "agent_response",
-            content: parsedResponse.response,
-          });
-
-          this.conversationHistory.push({
-            role: "assistant",
-            content: parsedResponse.response,
-          });
-        } else {
-          // Fallback to raw response
-          const finalResponse = this.streamingResponse || response || "I'm ready to help.";
-          this.sendMessage({
-            type: "agent_response",
-            content: finalResponse,
-          });
-          this.conversationHistory.push({
-            role: "assistant",
-            content: finalResponse,
-          });
-        }
+        await this.executeToolCalls(parsedResponse.tool_calls);
+        await this.runAgentLoop();
+        return;
       }
+
+      // If we get here, it's a pure text response (or parsing failed and it's not JSON-like)
+      const textContent = parsedResponse.response || response || "I'm ready to help.";
+      
+      this.sendMessage({
+        type: "agent_response",
+        content: textContent,
+      });
+
+      this.conversationHistory.push({
+        role: "assistant",
+        content: textContent,
+      });
     } catch (error: any) {
       console.error("Error in agent loop:", error);
       this.sendMessage({
@@ -313,17 +310,57 @@ When calling tools, you MUST provide ALL required parameters. The tool system wi
     thought?: string;
     tool_calls?: ToolCall[];
     response?: string;
+    error?: string;
   } {
     try {
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        return parsed;
+      // 1. Aggressive Sanitization: Remove markdown code blocks
+      let cleanResponse = response.replace(/```json\s*|\s*```/g, "");
+      
+      // 2. Regex Heuristic: Look for "tool_calls" pattern specifically if standard JSON fails
+      // This helps when models output: Thought: ... Tool calls: [...]
+      if (!cleanResponse.trim().startsWith("{") && cleanResponse.includes("Tool calls:")) {
+         const match = cleanResponse.match(/Tool calls:\s*(\[.*\])/s);
+         if (match) {
+            try {
+               const toolCalls = JSON.parse(match[1]);
+               return { 
+                 thought: cleanResponse.split("Tool calls:")[0].trim(),
+                 tool_calls: Array.isArray(toolCalls) ? toolCalls : [toolCalls]
+               };
+            } catch (e) {
+               // Continue to standard extraction
+            }
+         }
       }
-    } catch (error) {
-      // If parsing fails, treat the whole response as a text response
+
+      // 3. Standard Extraction: Locate the first { and last } to isolate JSON
+      const firstBrace = cleanResponse.indexOf('{');
+      const lastBrace = cleanResponse.lastIndexOf('}');
+      
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        const jsonStr = cleanResponse.substring(firstBrace, lastBrace + 1);
+        try {
+          const parsed = JSON.parse(jsonStr);
+          
+          // Normalize result
+          if (parsed.tool_calls) {
+             return parsed;
+          }
+          // Handle case where model outputs a single tool call object directly
+          if (parsed.name && parsed.arguments) {
+             return { tool_calls: [parsed] };
+          }
+          
+          return parsed;
+        } catch (e) {
+           return { error: "Invalid JSON format inside braces." };
+        }
+      }
+    } catch (error: any) {
+      return { error: error.message };
     }
 
+    // No JSON object found, treat as pure text response
     return { response };
   }
 
@@ -427,6 +464,57 @@ When calling tools, you MUST provide ALL required parameters. The tool system wi
   private async requestApproval(toolName: string, args: any): Promise<boolean> {
     const requestId = Math.random().toString(36).substring(7);
     
+    let diffData: { diff: string; added: number; removed: number } | undefined;
+
+    // Interactive Diff: Compute diff for file modifications
+    if (toolName === "edit_file" || toolName === "write_file") {
+      try {
+        let oldContent = "";
+        let newContent = "";
+        const filePath = args.path;
+
+        // Try to read existing file
+        try {
+          oldContent = await fs.readFile(filePath, "utf-8");
+        } catch {
+          // File doesn't exist (for write_file this is creation)
+          oldContent = "";
+        }
+
+        if (toolName === "edit_file") {
+          // For edit_file, we need to simulate the replacement
+          const search = args.search;
+          const replace = args.replace;
+          
+          // Normalizing line endings
+          const normalizedContent = oldContent.replace(/\r\n/g, '\n');
+          const normalizedSearch = search.replace(/\r\n/g, '\n');
+          
+          if (normalizedContent.includes(normalizedSearch)) {
+            // We compute the diff of the *change* specifically
+            // Or we could compute the diff of the whole file. 
+            // For surgical edits, diffing the search/replace block is cleaner.
+            diffData = computeDiff(normalizedSearch, replace);
+          } else {
+            // If search block not found, we can't show a valid diff, but we can warn
+            diffData = { diff: "⚠️  Search block not found in file. Tool execution will fail.", added: 0, removed: 0 };
+          }
+        } else if (toolName === "write_file") {
+          // For write_file, we compare old content vs new content
+          // Clean content from markdown if needed (simple check)
+          let content = args.content;
+          if (content.startsWith("```")) {
+             // Simple extraction if the agent still output markdown
+             const match = content.match(/^```[\w]*\n([\s\S]*?)\n```$/);
+             if (match) content = match[1];
+          }
+          diffData = computeDiff(oldContent, content);
+        }
+      } catch (error) {
+        console.error("Failed to compute diff for approval:", error);
+      }
+    }
+
     return new Promise((resolve) => {
       this.pendingApprovals.set(requestId, { resolve });
       
@@ -435,6 +523,9 @@ When calling tools, you MUST provide ALL required parameters. The tool system wi
         requestId,
         tool: toolName,
         args,
+        diff: diffData?.diff,
+        added: diffData?.added,
+        removed: diffData?.removed,
       });
 
       setTimeout(() => {

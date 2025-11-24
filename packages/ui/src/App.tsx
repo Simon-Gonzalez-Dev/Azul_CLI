@@ -59,6 +59,9 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
           requestId: message.requestId,
           tool: message.tool,
           args: message.args,
+          diff: message.diff,
+          added: message.added,
+          removed: message.removed,
         },
       }));
     } else if (message.type === "token_stats") {

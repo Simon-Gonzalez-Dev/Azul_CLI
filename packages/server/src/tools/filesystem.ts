@@ -21,7 +21,7 @@ function extractCodeFromMarkdown(content: string): string {
 }
 
 // Simple diff utility to show changes (optimized for readability)
-function computeDiff(oldContent: string, newContent: string): {
+export function computeDiff(oldContent: string, newContent: string): {
   added: number;
   removed: number;
   diff: string;
