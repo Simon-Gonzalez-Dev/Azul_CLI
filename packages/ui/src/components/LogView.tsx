@@ -174,7 +174,7 @@ export const LogView: React.FC<LogViewProps> = ({ messages }) => {
         return (
           <Box key={index} marginY={0}>
             <Text color="cyan">
-              Mode switched to: {message.mode === "api" ? "Gemini API" : "Local LLM"}
+              Mode switched to: {message.mode === "api" ? "Groq API" : "Local LLM"}
             </Text>
           </Box>
         );

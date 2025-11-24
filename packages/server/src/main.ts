@@ -5,7 +5,7 @@ import * as fs from "fs/promises";
 import { fileURLToPath } from "url";
 import * as dotenv from "dotenv";
 import { LLMService } from "./llm.js";
-import { OpenRouterLLMService } from "./openrouter-llm.js";
+import { GroqLLMService } from "./groq-llm.js";
 import { ILLMService } from "./llm-interface.js";
 import { Config } from "./types.js";
 import { Agent } from "./agent.js";
@@ -19,28 +19,62 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Load environment variables - try package root first, then current directory
+// Current directory .env will override package root .env values
 const packageRoot = path.resolve(__dirname, "../../..");
 const packageEnvPath = path.join(packageRoot, ".env");
 const cwdEnvPath = path.join(process.cwd(), ".env");
 
-// Try package root .env first (for global installs), then current directory
-// dotenv.config() doesn't throw if file doesn't exist, so we check both
-const packageEnv = dotenv.config({ path: packageEnvPath });
-if (packageEnv.error) {
-  // Only log if it's a real error (not just file not found)
-  const errorCode = (packageEnv.error as any).code;
-  if (errorCode && errorCode !== 'ENOENT') {
-    console.warn(`Warning: Error loading .env from package root: ${packageEnv.error.message}`);
+// Store .env loading messages
+const envLoadMessages: string[] = [];
+
+// Try package root .env first (for global installs)
+let packageEnvLoaded = false;
+try {
+  const packageEnv = dotenv.config({ path: packageEnvPath });
+  if (!packageEnv.error) {
+    packageEnvLoaded = true;
+    const msg = `Loaded .env from package root: ${packageEnvPath}`;
+    console.log(`   ${msg}`);
+    envLoadMessages.push(msg);
+  } else {
+    const errorCode = (packageEnv.error as any).code;
+    if (errorCode && errorCode !== 'ENOENT') {
+      const msg = `Warning: Error loading .env from package root: ${packageEnv.error.message}`;
+      console.warn(`   ${msg}`);
+      envLoadMessages.push(msg);
+    }
   }
+} catch (error: any) {
+  // Ignore if file doesn't exist
 }
 
 // Also try current directory .env (allows project-specific overrides)
-const cwdEnv = dotenv.config({ path: cwdEnvPath });
-if (cwdEnv.error) {
-  const errorCode = (cwdEnv.error as any).code;
-  if (errorCode && errorCode !== 'ENOENT') {
-    console.warn(`Warning: Error loading .env from current directory: ${cwdEnv.error.message}`);
+// Use override: true so current directory .env takes precedence
+let cwdEnvLoaded = false;
+try {
+  const cwdEnv = dotenv.config({ path: cwdEnvPath, override: true });
+  if (!cwdEnv.error) {
+    cwdEnvLoaded = true;
+    const msg = `Loaded .env from current directory: ${cwdEnvPath}`;
+    console.log(`   ${msg}`);
+    envLoadMessages.push(msg);
+  } else {
+    const errorCode = (cwdEnv.error as any).code;
+    if (errorCode && errorCode !== 'ENOENT') {
+      const msg = `Warning: Error loading .env from current directory: ${cwdEnv.error.message}`;
+      console.warn(`   ${msg}`);
+      envLoadMessages.push(msg);
+    }
   }
+} catch (error: any) {
+  // Ignore if file doesn't exist
+}
+
+// Debug: Show which .env files were loaded
+if (!packageEnvLoaded && !cwdEnvLoaded) {
+  const msg = `No .env file found (checked: ${packageEnvPath}, ${cwdEnvPath})`;
+  console.log(`   ${msg}`);
+  envLoadMessages.push(msg);
 }
 
 
@@ -110,11 +144,29 @@ async function main() {
   console.log(BANNER);
   console.log("Starting Azul...");
 
+  // Store initialization messages to send to UI
+  const initMessages: any[] = [];
+
+  // Add .env loading messages to init messages (loaded at module level)
+  if (envLoadMessages.length > 0) {
+    initMessages.push({
+      type: "system",
+      message: envLoadMessages.join("\n"),
+      timestamp: Date.now(),
+    });
+  }
+
   // Load configuration
   const { config, configPath } = await loadConfig();
+  const configMsg = `Configuration loaded\nModel: ${config.modelPath}\nContext Size: ${config.contextSize}`;
   console.log(`   Configuration loaded`);
   console.log(`   Model: ${config.modelPath}`);
   console.log(`   Context Size: ${config.contextSize}`);
+  initMessages.push({
+    type: "system",
+    message: configMsg,
+    timestamp: Date.now(),
+  });
 
   // Initialize mode tracking
   let currentMode: "local" | "api" = "local";
@@ -150,6 +202,11 @@ async function main() {
   try {
     await localLLM.initialize(modelPath);
     console.log("   Local LLM initialized\n");
+    initMessages.push({
+      type: "system",
+      message: "Local LLM initialized",
+      timestamp: Date.now(),
+    });
     currentLLM = localLLM;
   } catch (error) {
     console.error(" Failed to initialize local LLM:", error);
@@ -157,22 +214,59 @@ async function main() {
     process.exit(1);
   }
 
-  // Initialize OpenRouter API (if API key is available)
-  const openRouterApiKey = process.env.OPENROUTER_API_KEY;
-  let apiLLM: OpenRouterLLMService | null = null;
+  // Initialize Groq API (if API key is available)
+  const groqApiKey = process.env.GROK_API_KEY;
+  const groqModel = process.env.GROK_MODEL;
+  let apiLLM: GroqLLMService | null = null;
   
-  if (openRouterApiKey) {
-    try {
-      apiLLM = new OpenRouterLLMService(openRouterApiKey);
-      await apiLLM.initialize({});
-      console.log("   OpenRouter API initialized (use /api to switch)\n");
-    } catch (error: any) {
-      console.error("   Warning: Failed to initialize OpenRouter API:", error.message);
-      console.error("   Continuing with local mode only\n");
+  // Debug: Show what we found
+  let envDebugMsg = "";
+  if (groqApiKey) {
+    const maskedKey = groqApiKey.length > 11 
+      ? `${groqApiKey.substring(0, 7)}...${groqApiKey.substring(groqApiKey.length - 4)}`
+      : '***';
+    const msg = `Found GROK_API_KEY: ${maskedKey} (length: ${groqApiKey.length})`;
+    console.log(`   ${msg}`);
+    envDebugMsg = msg;
+    if (groqModel) {
+      const modelMsg = `Found GROK_MODEL: ${groqModel}`;
+      console.log(`   ${modelMsg}`);
+      envDebugMsg += `\n${modelMsg}`;
     }
   } else {
-    console.log("   OpenRouter API key not found in .env (OPENROUTER_API_KEY)");
-    console.log("   Continuing with local mode only\n");
+    const msg = "GROK_API_KEY not found in environment variables\nChecked process.env.GROK_API_KEY";
+    console.log(`   ${msg}`);
+    envDebugMsg = msg;
+  }
+  
+  if (groqApiKey && groqApiKey.trim().length > 0) {
+    try {
+      apiLLM = new GroqLLMService(groqApiKey.trim(), groqModel?.trim());
+      await apiLLM.initialize({});
+      const msg = "Groq API initialized (use /api to switch)";
+      console.log(`   ${msg}\n`);
+      initMessages.push({
+        type: "system",
+        message: `${envDebugMsg}\n${msg}`,
+        timestamp: Date.now(),
+      });
+    } catch (error: any) {
+      const msg = `Warning: Failed to initialize Groq API: ${error.message}\nContinuing with local mode only`;
+      console.error(`   ${msg}\n`);
+      initMessages.push({
+        type: "error",
+        message: `${envDebugMsg}\n${msg}`,
+        timestamp: Date.now(),
+      });
+    }
+  } else {
+    const msg = "Groq API key not available - continuing with local mode only";
+    console.log(`   ${msg}\n`);
+    initMessages.push({
+      type: "system",
+      message: `${envDebugMsg}\n${msg}`,
+      timestamp: Date.now(),
+    });
   }
 
   // Create message handler for UI
@@ -311,7 +405,7 @@ async function main() {
       } else {
         messageHandlers.onMessage({
           type: "error",
-          message: "OpenRouter API not available. Make sure OPENROUTER_API_KEY is set in .env file.",
+          message: "Groq API not available. Make sure GROK_API_KEY is set in .env file.",
           timestamp: Date.now(),
         });
       }
@@ -334,6 +428,10 @@ async function main() {
       onApproval: messageHandlers.onApproval,
       onMessage: (handler: (message: any) => void) => {
         messageHandlers.onMessage = handler;
+        // Send initialization messages to UI once handler is ready
+        setTimeout(() => {
+          initMessages.forEach(msg => handler(msg));
+        }, 100);
       },
       onReset: handleReset,
       onSwitchMode: handleSwitchMode,

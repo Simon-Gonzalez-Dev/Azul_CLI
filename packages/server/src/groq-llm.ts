@@ -1,23 +1,33 @@
+import Groq from "groq-sdk";
 import { ChatMessage, ToolDefinition, TokenStats } from "./types.js";
 import { ILLMService } from "./llm-interface.js";
 
-export class OpenRouterLLMService implements ILLMService {
+export class GroqLLMService implements ILLMService {
+  private groq: Groq;
   private apiKey: string;
-  private model: string = "mistralai/mistral-small-3.2-24b-instruct:free";
+  private model: string = "openai/gpt-oss-20b";
   private totalInputTokens: number = 0;
   private totalOutputTokens: number = 0;
   private chatHistory: ChatMessage[] = [];
 
   constructor(apiKey: string, model?: string) {
-    this.apiKey = apiKey;
+    // Validate API key
+    if (!apiKey || typeof apiKey !== 'string' || apiKey.trim().length === 0) {
+      throw new Error('Groq API key is required and cannot be empty');
+    }
+    this.apiKey = apiKey.trim();
+    this.groq = new Groq({ apiKey: this.apiKey });
     if (model) {
       this.model = model;
     }
   }
 
   async initialize(config: any): Promise<void> {
-    // No initialization needed for API
-    console.log(`  OpenRouter API initialized (model: ${this.model})`);
+    // Log masked API key for debugging
+    const maskedKey = this.apiKey.length > 11 
+      ? `${this.apiKey.substring(0, 7)}...${this.apiKey.substring(this.apiKey.length - 4)}`
+      : '***';
+    console.log(`  Groq API initialized (model: ${this.model}, key: ${maskedKey})`);
   }
 
   async cleanup(): Promise<void> {
@@ -50,7 +60,7 @@ export class OpenRouterLLMService implements ILLMService {
   ): Promise<{ response: string; stats: TokenStats }> {
     const startTime = Date.now();
 
-    // Build messages array for OpenRouter API
+    // Build messages array for Groq API
     const messages: any[] = [
       { role: "system", content: this.buildSystemPrompt(systemPrompt, tools) }
     ];
@@ -58,7 +68,7 @@ export class OpenRouterLLMService implements ILLMService {
     // Add conversation history
     for (const msg of conversationHistory) {
       if (msg.role === "tool") {
-        // OpenRouter uses different format for tool responses
+        // Groq uses different format for tool responses
         // We'll encode it as a user message with context
         messages.push({
           role: "user",
@@ -82,110 +92,55 @@ export class OpenRouterLLMService implements ILLMService {
     }
 
     try {
-      // Use streaming if onToken callback is provided
-      const useStreaming = !!onToken;
-      
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${this.apiKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://github.com/azul-cli",
-          "X-Title": "Azul CLI"
-        },
-        body: JSON.stringify({
-          model: this.model,
-          messages: messages,
-          temperature: 0.9,
-          max_tokens: 16384,
-          stream: useStreaming
-        })
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
-      }
-
       let content = "";
       let inputTokens = 0;
       let outputTokens = 0;
       let totalTokens = 0;
 
-      if (useStreaming && response.body) {
-        // Handle streaming response (Server-Sent Events)
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let buffer = '';
+      // Use streaming if onToken callback is provided
+      if (onToken) {
+        // Handle streaming response - Groq SDK returns async iterable when stream: true
+        const stream = await this.groq.chat.completions.create({
+          messages: messages,
+          model: this.model,
+          temperature: 0.9,
+          max_tokens: 8192,
+          top_p: 1,
+          stop: null,
+          stream: true,
+        });
 
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-
-          // Process complete events (SSE format: "data: {...}\n\n")
-          // Events are separated by double newlines
-          let boundary = buffer.indexOf('\n\n');
-          while (boundary !== -1) {
-            const event = buffer.slice(0, boundary);
-            buffer = buffer.slice(boundary + 2);
-
-            // Parse SSE event - look for "data: " line
-            const lines = event.split('\n');
-            for (const line of lines) {
-              if (line.startsWith('data:')) {
-                const data = line.slice(5).trim();
-                
-                // Check for [DONE] marker
-                if (data === '[DONE]') {
-                  break;
-                }
-
-                if (!data) continue;
-
-                try {
-                  const json = JSON.parse(data);
-                  
-                  // Extract token content from delta
-                  const deltaContent = json.choices?.[0]?.delta?.content;
-                  if (deltaContent) {
-                    content += deltaContent;
-                    // Stream accumulated content
-                    if (onToken) {
-                      onToken(content);
-                    }
-                  }
-
-                  // Extract usage stats if available (usually in last chunk)
-                  if (json.usage) {
-                    inputTokens = json.usage.prompt_tokens || 0;
-                    outputTokens = json.usage.completion_tokens || 0;
-                    totalTokens = json.usage.total_tokens || 0;
-                  }
-                } catch (error) {
-                  // Skip invalid JSON chunks (might be empty or malformed)
-                  // Don't log warnings for empty chunks as they're common
-                  if (data && data !== '[DONE]') {
-                    console.warn("Failed to parse SSE chunk:", error, "Data:", data.substring(0, 100));
-                  }
-                }
-              }
-            }
-
-            boundary = buffer.indexOf('\n\n');
+        let accumulatedContent = "";
+        for await (const chunk of stream) {
+          const deltaContent = chunk.choices?.[0]?.delta?.content;
+          if (deltaContent) {
+            accumulatedContent += deltaContent;
+            content = accumulatedContent;
+            // Stream accumulated content
+            onToken(content);
           }
+
+          // Note: Groq streaming chunks don't include usage stats
+          // We'll estimate tokens or leave them at 0 for streaming
+          // Usage stats are only available in non-streaming responses
         }
 
-        // Update cumulative token stats
-        if (inputTokens > 0 || outputTokens > 0) {
-          this.totalInputTokens += inputTokens;
-          this.totalOutputTokens += outputTokens;
-        }
+        // For streaming, we don't have usage stats from the API
+        // You could estimate tokens here if needed, but we'll leave them at 0
+        // The cumulative stats won't be updated for streaming responses
       } else {
-        // Non-streaming response (fallback)
-        const data: any = await response.json();
-        content = data.choices[0]?.message?.content || "";
+        // Non-streaming response
+        const data = await this.groq.chat.completions.create({
+          messages: messages,
+          model: this.model,
+          temperature: 0.9,
+          max_tokens: 8192,
+          top_p: 1,
+          stop: null,
+          stream: false,
+        });
+
+        content = data.choices?.[0]?.message?.content || "";
 
         // Update token stats if available
         if (data.usage) {
@@ -195,11 +150,6 @@ export class OpenRouterLLMService implements ILLMService {
           
           this.totalInputTokens += inputTokens;
           this.totalOutputTokens += outputTokens;
-        }
-
-        // Call onToken if provided (for non-streaming, send full response)
-        if (onToken && content) {
-          onToken(content);
         }
       }
 
@@ -218,9 +168,18 @@ export class OpenRouterLLMService implements ILLMService {
       };
 
       return { response: content, stats };
-    } catch (error) {
-      console.error("Error calling OpenRouter API:", error);
-      throw error;
+    } catch (error: any) {
+      console.error("Error calling Groq API:", error);
+      let errorMessage = `Groq API error: ${error.message || error}`;
+      
+      // Provide helpful error messages for common issues
+      if (error.status === 401) {
+        errorMessage += '\n\nAuthentication failed. Please check that your GROK_API_KEY is correct in your .env file.';
+      } else if (error.status === 429) {
+        errorMessage += '\n\nRate limit exceeded. Please try again later.';
+      }
+      
+      throw new Error(errorMessage);
     }
   }
 

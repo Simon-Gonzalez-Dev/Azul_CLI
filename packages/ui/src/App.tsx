@@ -138,7 +138,7 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
           ...prev.messages,
           {
             type: "system",
-            message: `Switched to ${message.mode === "api" ? "API (OpenRouter)" : "Local LLM"} mode`,
+            message: `Switched to ${message.mode === "api" ? "API (Groq)" : "Local LLM"} mode`,
             timestamp: Date.now(),
           },
         ],
@@ -246,11 +246,11 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
 /clear    - Clear the screen (keeps memory)
 /cd <dir> - Change directory (e.g., /cd /path/to/dir or /cd ..)
 /ls [dir] - List directory contents (e.g., /ls or /ls /path)
-/api      - Switch to API mode (OpenRouter)
+/api      - Switch to API mode (Groq)
 /local    - Switch to local LLM mode
 /quit     - Exit the application
 
-Current mode: ${mode === "api" ? "API (OpenRouter)" : "Local LLM"}
+Current mode: ${mode === "api" ? "API (Groq)" : "Local LLM"}
 
 All commands must start with /. Type / and press Tab to see available commands.`,
           timestamp: Date.now(),

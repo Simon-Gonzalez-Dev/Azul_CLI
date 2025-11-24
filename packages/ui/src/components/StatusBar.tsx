@@ -42,7 +42,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   const tokensPerSec = tokenStats.tokensPerSecond || 0;
 
   const modeLabel =
-    mode === "api" ? "API • OpenRouter" : `Local • ${modelName}`;
+    mode === "api" ? "API • Groq" : `Local • ${modelName}`;
 
   return (
     <Box
