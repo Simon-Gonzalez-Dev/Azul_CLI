@@ -42,6 +42,18 @@ export abstract class BaseLLMProvider implements ILLMService {
     return `${label}: ${content ?? ""}`;
   }
 
+  protected formatToolCallsAsXml(toolCalls: ToolCall[]): string {
+    return toolCalls.map(call => {
+      let argsXml = "";
+      if (call.arguments) {
+        for (const [key, value] of Object.entries(call.arguments)) {
+          argsXml += `<${key}>${value}</${key}>\n`;
+        }
+      }
+      return `<tool_code>\n<tool_name>${call.name}</tool_name>\n<parameters>\n${argsXml}</parameters>\n</tool_code>`;
+    }).join("\n\n");
+  }
+
   protected mapToOpenAIChatMessages(messages: ChatMessage[]): { role: "system" | "user" | "assistant"; content: string }[] {
     return messages.map((msg) => {
       if (msg.role === "tool") {
@@ -52,11 +64,11 @@ export abstract class BaseLLMProvider implements ILLMService {
       }
 
       if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
-        const serializedCalls = JSON.stringify(msg.tool_calls);
+        const xmlCalls = this.formatToolCallsAsXml(msg.tool_calls);
         const baseContent = msg.content ? `${msg.content}\n\n` : "";
         return {
           role: "assistant",
-          content: `${baseContent}Tool calls: ${serializedCalls}`.trim(),
+          content: `${baseContent}${xmlCalls}`.trim(),
         };
       }
 
@@ -78,7 +90,7 @@ export abstract class BaseLLMProvider implements ILLMService {
       } else if (msg.role === "assistant") {
         if (msg.tool_calls && msg.tool_calls.length > 0) {
           output += `Assistant: ${msg.content ?? "I'll use tools to help."}\n`;
-          output += `Tool calls: ${JSON.stringify(msg.tool_calls)}\n\n`;
+          output += `${this.formatToolCallsAsXml(msg.tool_calls)}\n\n`;
         } else {
           output += `Assistant: ${msg.content ?? ""}\n\n`;
         }
@@ -116,22 +128,31 @@ export abstract class BaseLLMProvider implements ILLMService {
         fullSystemPrompt += `Parameters: ${JSON.stringify(tool.parameters, null, 2)}\n\n`;
       });
 
-      // Standardized JSON tool call format for ALL providers
-      fullSystemPrompt += `\nTo use a tool, respond with a JSON object in this format:
-{
-  "thought": "Your reasoning about what to do",
-  "tool_calls": [
-    {
-      "name": "tool_name",
-      "arguments": { "param1": "value1" }
-    }
-  ]
-}
+      // Standardized XML tool call format for ALL providers
+      fullSystemPrompt += `\nTo use a tool, you MUST use the following XML format.
+ALL of your reasoning must be contained within <thought> tags.
+ALL tool calls must be contained within <tool_code> tags.
+
+Format:
+<thought>
+Explain your reasoning here...
+</thought>
+<tool_code>
+<tool_name>tool_name</tool_name>
+<parameters>
+<param_name>param_value</param_name>
+<another_param>
+multi-line
+value
+</another_param>
+</parameters>
+</tool_code>
 
 IMPORTANT:
-- Do NOT use markdown code blocks for the JSON.
-- Output RAW JSON only.
-- Extract code from markdown blocks before writing files.
+- You MUST use valid XML tags.
+- Do NOT use markdown code blocks for the XML.
+- Text outside <thought> or <tool_code> tags will be ignored.
+- For tool parameters that contain code, just put the code directly inside the tag. No need to escape quotes.
 `;
     }
 

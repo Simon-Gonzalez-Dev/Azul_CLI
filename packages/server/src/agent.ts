@@ -119,9 +119,10 @@ When calling tools, you MUST provide ALL required parameters. The tool system wi
 
 # RESPONSE FORMATTING
 
-- **When Thinking:** If you need to plan, you may output a short "Thought" before a tool call, but keep it brief (1-2 sentences).
-- **When Acting:** Issue the Tool Call immediately with ALL required parameters.
-- **When Finished:** Only address the User when the task is complete or you need clarification.
+- **Strict XML Enforcement:** You must use the XML tags <thought> and <tool_code> for all responses.
+- **Thinking:** Use <thought> tags for planning and reasoning.
+- **Tool Execution:** Use <tool_code> tags for all tool calls.
+- **No Chatter:** Text outside these tags is strictly forbidden and will be ignored.
 
 # CRITICAL REMINDER
 - ALL tool parameters listed above are REQUIRED. Do not omit any parameters.
@@ -237,25 +238,19 @@ When calling tools, you MUST provide ALL required parameters. The tool system wi
         return;
       }
 
-      // Attempt to parse the response as JSON (for local models or Groq falling back to text)
-      // This handles the case where the model outputs ```json ... ```
-      // IMPORTANT: We must try to parse BEFORE treating it as plain text
+      // Attempt to parse the response using the new XML parser
       const parsedResponse = this.parseResponse(response || this.streamingResponse || "");
 
-      if (parsedResponse.error) {
-         // If it looks like it WAS trying to be JSON (had braces) but failed
-         if ((response || "").includes("```json") || (response || "").trim().startsWith("{")) {
-             console.warn("JSON Parse Error:", parsedResponse.error);
-             this.conversationHistory.push({
-               role: "user", 
-               content: `System Error: Invalid JSON format. Please output RAW JSON only, no markdown. Error: ${parsedResponse.error}`
-             });
-             await this.runAgentLoop();
-             return;
-         }
-         // Otherwise, treat as normal text (fall through)
-      } else if (parsedResponse.tool_calls && parsedResponse.tool_calls.length > 0) {
-        // We successfully parsed tool calls from the text response
+      // If thoughts are present, send them
+      if (parsedResponse.thought) {
+        this.sendMessage({
+            type: "agent_thought",
+            content: parsedResponse.thought
+        });
+      }
+
+      // If parsing succeeded and we have tool calls
+      if (parsedResponse.tool_calls && parsedResponse.tool_calls.length > 0) {
         this.conversationHistory.push({
           role: "assistant",
           content: parsedResponse.thought || "I'll use tools to complete this task.",
@@ -266,19 +261,52 @@ When calling tools, you MUST provide ALL required parameters. The tool system wi
         await this.runAgentLoop();
         return;
       }
-
-      // If we get here, it's a pure text response (or parsing failed and it's not JSON-like)
-      const textContent = parsedResponse.response || response || "I'm ready to help.";
       
-      this.sendMessage({
-        type: "agent_response",
-        content: textContent,
-      });
+      // If no tool calls but we have thought, treated as final response? 
+      // The prompt says "Text outside these tags is strictly forbidden".
+      // But if the model provides <thought> and no <tool_code>, maybe it's just thinking or answering.
+      // If ONLY thought is provided, treat it as response.
+      if (parsedResponse.thought && (!parsedResponse.tool_calls || parsedResponse.tool_calls.length === 0)) {
+          this.sendMessage({
+            type: "agent_response",
+            content: parsedResponse.thought,
+          });
 
-      this.conversationHistory.push({
-        role: "assistant",
-        content: textContent,
-      });
+          this.conversationHistory.push({
+            role: "assistant",
+            content: parsedResponse.thought,
+          });
+          return;
+      }
+
+      // If parsing failed entirely (no tags found), and we have raw text
+      if (!parsedResponse.thought && !parsedResponse.tool_calls) {
+         // Fallback: If strict mode, we might want to warn. 
+         // But for robustness, if meaningful text exists, treat as response.
+         const textContent = parsedResponse.response || response || "I'm ready to help.";
+         
+         // If it looks like it TRIED to use tools but failed XML?
+         if (textContent.includes("<tool_code>") || textContent.includes("<thought>")) {
+             console.warn("XML Parse Error or Incomplete Tags");
+             this.conversationHistory.push({
+                 role: "user",
+                 content: "System: Invalid XML format. Please use <thought> and <tool_code> tags correctly."
+             });
+             await this.runAgentLoop();
+             return;
+         }
+
+         this.sendMessage({
+            type: "agent_response",
+            content: textContent,
+          });
+
+          this.conversationHistory.push({
+            role: "assistant",
+            content: textContent,
+          });
+      }
+
     } catch (error: any) {
       console.error("Error in agent loop:", error);
       this.sendMessage({
@@ -295,55 +323,97 @@ When calling tools, you MUST provide ALL required parameters. The tool system wi
     error?: string;
   } {
     try {
-      // 1. Aggressive Sanitization: Remove markdown code blocks
-      let cleanResponse = response.replace(/```json\s*|\s*```/g, "");
-      
-      // 2. Regex Heuristic: Look for "tool_calls" pattern specifically if standard JSON fails
-      // This helps when models output: Thought: ... Tool calls: [...]
-      if (!cleanResponse.trim().startsWith("{") && cleanResponse.includes("Tool calls:")) {
-         const match = cleanResponse.match(/Tool calls:\s*(\[.*\])/s);
-         if (match) {
-            try {
-               const toolCalls = JSON.parse(match[1]);
-               return { 
-                 thought: cleanResponse.split("Tool calls:")[0].trim(),
-                 tool_calls: Array.isArray(toolCalls) ? toolCalls : [toolCalls]
-               };
-            } catch (e) {
-               // Continue to standard extraction
-            }
-         }
+      // XML Parsing Logic
+      let thought: string | undefined;
+      const tool_calls: ToolCall[] = [];
+
+      // 1. Extract Thought
+      const thoughtMatch = response.match(/<thought>([\s\S]*?)<\/thought>/i);
+      if (thoughtMatch) {
+        thought = thoughtMatch[1].trim();
       }
 
-      // 3. Standard Extraction: Locate the first { and last } to isolate JSON
-      const firstBrace = cleanResponse.indexOf('{');
-      const lastBrace = cleanResponse.lastIndexOf('}');
+      // 2. Extract Tool Calls
+      // Support multiple tool codes or single? Protocol implies one <tool_code> block containing one tool? 
+      // Or multiple <tool_code>? Let's assume one <tool_code> block per tool call or multiple.
+      // The prompt says: "ALL tool calls must be contained within <tool_code> tags."
+      // Example:
+      // <tool_code>
+      //   <tool_name>...</tool_name>
+      //   <parameters>...</parameters>
+      // </tool_code>
       
-      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-        const jsonStr = cleanResponse.substring(firstBrace, lastBrace + 1);
-        try {
-          const parsed = JSON.parse(jsonStr);
-          
-          // Normalize result
-          if (parsed.tool_calls) {
-             return parsed;
-          }
-          // Handle case where model outputs a single tool call object directly
-          if (parsed.name && parsed.arguments) {
-             return { tool_calls: [parsed] };
-          }
-          
-          return parsed;
-        } catch (e) {
-           return { error: "Invalid JSON format inside braces." };
+      const toolCodeRegex = /<tool_code>([\s\S]*?)<\/tool_code>/gi;
+      let match;
+      
+      while ((match = toolCodeRegex.exec(response)) !== null) {
+        const toolBlock = match[1];
+        
+        // Extract tool name
+        const nameMatch = toolBlock.match(/<tool_name>([\s\S]*?)<\/tool_name>/i);
+        if (nameMatch) {
+            const toolName = nameMatch[1].trim();
+            
+            // Extract parameters block
+            const paramsMatch = toolBlock.match(/<parameters>([\s\S]*?)<\/parameters>/i);
+            const args: any = {};
+            
+            if (paramsMatch) {
+                const paramsContent = paramsMatch[1];
+                // Regex to find all tags inside parameters
+                // Match <key>value</key>
+                // We use a regex that matches any tag name
+                const paramRegex = /<([^>]+)>([\s\S]*?)<\/\1>/gi;
+                let paramMatch;
+                
+                while ((paramMatch = paramRegex.exec(paramsContent)) !== null) {
+                    const key = paramMatch[1].trim();
+                    const value = paramMatch[2].trim();
+                    args[key] = value;
+                }
+            }
+
+            tool_calls.push({
+                name: toolName,
+                arguments: args
+            });
         }
       }
-    } catch (error: any) {
-      return { error: error.message };
-    }
 
-    // No JSON object found, treat as pure text response
-    return { response };
+      // If no XML tags found, return original response as plain text (or partial thought)
+      if (!thought && tool_calls.length === 0) {
+         // Fallback for JSON-style tool calls (for legacy/inconsistent models)
+         if (response.includes("Tool calls:")) {
+            const match = response.match(/Tool calls:\s*(\[.*\])/s);
+            if (match) {
+                try {
+                    const jsonCalls = JSON.parse(match[1]);
+                    const calls = Array.isArray(jsonCalls) ? jsonCalls : [jsonCalls];
+                    // Map to expected structure if needed, but usually it matches
+                    // We treat everything before "Tool calls:" as thought
+                    const splitThought = response.split("Tool calls:")[0].trim();
+                    return {
+                        thought: splitThought,
+                        tool_calls: calls
+                    };
+                } catch (e) {
+                    // ignore
+                }
+            }
+         }
+
+         // Check if it's just text without tags
+         return { response: response };
+      }
+
+      return {
+        thought,
+        tool_calls: tool_calls.length > 0 ? tool_calls : undefined
+      };
+
+    } catch (error: any) {
+      return { error: error.message, response: response };
+    }
   }
 
   private async executeToolCalls(toolCalls: ToolCall[]): Promise<void> {

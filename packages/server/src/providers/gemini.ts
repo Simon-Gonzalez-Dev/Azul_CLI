@@ -7,7 +7,7 @@ type GeminiContent = { role: string; parts: GeminiPart[] };
 export class GeminiProvider extends BaseLLMProvider {
   private readonly apiKey: string;
   private readonly providerName = "Google Gemini";
-  private model: string = "gemini-1.5-flash";
+  private model: string = "gemini-2.0-flash-001";
 
   constructor(apiKey: string, model?: string) {
     super();
@@ -58,7 +58,8 @@ export class GeminiProvider extends BaseLLMProvider {
       const role = msg.role === "assistant" ? "model" : "user";
       let text = msg.content ?? "";
       if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
-        text = `${text}\nTool calls: ${JSON.stringify(msg.tool_calls)}`.trim();
+        const xmlCalls = this.formatToolCallsAsXml(msg.tool_calls);
+        text = `${text}\n${xmlCalls}`.trim();
       }
 
       contents.push({
