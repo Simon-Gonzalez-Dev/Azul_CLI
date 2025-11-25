@@ -111,6 +111,12 @@ When calling tools, you MUST provide ALL required parameters. The tool system wi
 **Required Parameters:**
 - command: <shell_command>
 
+**IMPORTANT regarding execute_command:**
+If you run a command that starts a server (like \`npm run dev\`), the tool will run it for 5 seconds and then stop it to show you the initial logs.
+- If you see "Command timed out... output captured", check the logs.
+- If the logs say "Server running" or "Ready", consider the task SUCCESSFUL.
+- Do not try to run the server endlessly; just verify it starts without errors.
+
 ## Tool: search_files
 **Purpose:** Search for text patterns in files
 **Required Parameters:**
