@@ -1,6 +1,6 @@
 import React from "react";
 import { Box, Text } from "ink";
-import { Message } from "../types.js";
+import { Message, ProviderStatusMessage } from "../types.js";
 import chalk from "chalk";
 import { DiffView } from "./DiffView.js";
 
@@ -183,8 +183,23 @@ export const LogView: React.FC<LogViewProps> = ({ messages }) => {
         return (
           <Box key={index} marginY={0}>
             <Text color="cyan">
-              Mode switched to: {message.mode === "api" ? "Groq API" : "Local LLM"}
+              Mode switched to: {message.mode === "api" ? "API" : "Local"}
             </Text>
+          </Box>
+        );
+
+      case "provider_status":
+        const status: ProviderStatusMessage = message.status;
+        return (
+          <Box key={index} marginY={0} flexDirection="column">
+            <Text color={status.mode === "api" ? "yellow" : "cyan"}>
+              {status.fallback
+                ? `Fallback to ${status.provider}${status.model ? ` (${status.model})` : ""}`
+                : `Active provider: ${status.provider}${status.model ? ` (${status.model})` : ""}`}
+            </Text>
+            {status.fallback && status.reason && (
+              <Text dimColor>Reason: {status.reason}</Text>
+            )}
           </Box>
         );
 

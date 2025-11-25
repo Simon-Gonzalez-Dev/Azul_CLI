@@ -11,6 +11,8 @@ export interface AppState {
   userInput: string;
   pendingApproval: ApprovalRequest | null;
   tokenStats: TokenStats;
+  providerStatusApi?: ProviderStatusMessage;
+  providerStatusLocal?: ProviderStatusMessage;
 }
 
 export interface ApprovalRequest {
@@ -35,5 +37,14 @@ export interface TokenStats {
   cumulativeTotalTokens?: number;
   totalInputTokens?: number;
   totalOutputTokens?: number;
+}
+
+export interface ProviderStatusMessage {
+  mode: "local" | "api";
+  provider: string;
+  model: string;
+  fallback?: boolean;
+  reason?: string;
+  previousProvider?: string;
 }
 

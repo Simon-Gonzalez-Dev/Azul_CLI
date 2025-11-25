@@ -4,7 +4,7 @@ import { LogView } from "./components/LogView.js";
 import { UserInput } from "./components/UserInput.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { PermissionModal } from "./components/PermissionModal.js";
-import { Message, AppState, ApprovalRequest } from "./types.js";
+import { Message, AppState, ApprovalRequest, ProviderStatusMessage } from "./types.js";
 
 export interface AppProps {
   onUserInput: (text: string) => void;
@@ -32,6 +32,8 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
       totalInputTokens: 0,
       totalOutputTokens: 0,
     },
+    providerStatusApi: undefined,
+    providerStatusLocal: undefined,
   });
 
   const [mode, setMode] = useState<"local" | "api">(currentMode);
@@ -141,7 +143,24 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
           ...prev.messages,
           {
             type: "system",
-            message: `Switched to ${message.mode === "api" ? "API (Groq)" : "Local LLM"} mode`,
+            message: `Switched to ${message.mode === "api" ? "API" : "Local"} mode`,
+            timestamp: Date.now(),
+          },
+        ],
+      }));
+    } else if (message.type === "provider_status") {
+      const providerStatus: ProviderStatusMessage = message.status;
+      setState((prev) => ({
+        ...prev,
+        providerStatusApi:
+          providerStatus.mode === "api" ? providerStatus : prev.providerStatusApi,
+        providerStatusLocal:
+          providerStatus.mode === "local" ? providerStatus : prev.providerStatusLocal,
+        messages: [
+          ...prev.messages,
+          {
+            type: "provider_status",
+            status: providerStatus,
             timestamp: Date.now(),
           },
         ],
@@ -249,11 +268,11 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
 /clear    - Clear the screen (keeps memory)
 /cd <dir> - Change directory (e.g., /cd /path/to/dir or /cd ..)
 /ls [dir] - List directory contents (e.g., /ls or /ls /path)
-/api      - Switch to API mode (Groq)
+/api      - Switch to API mode (HF → Gemini → Groq → OpenRouter)
 /local    - Switch to local LLM mode
 /quit     - Exit the application
 
-Current mode: ${mode === "api" ? "API (Groq)" : "Local LLM"}
+Current mode: ${mode === "api" ? "API (cloud cascade)" : "Local LLM"}
 
 All commands must start with /. Type / and press Tab to see available commands.`,
           timestamp: Date.now(),
@@ -284,7 +303,12 @@ All commands must start with /. Type / and press Tab to see available commands.`
 
   return (
     <Box flexDirection="column" height="100%">
-      <StatusBar connected={state.connected} tokenStats={state.tokenStats} mode={mode} />
+      <StatusBar
+        connected={state.connected}
+        tokenStats={state.tokenStats}
+        mode={mode}
+        providerStatus={mode === "api" ? state.providerStatusApi : state.providerStatusLocal}
+      />
       <Box flexDirection="column" flexGrow={1} paddingY={1}>
         <LogView messages={state.messages} />
       </Box>

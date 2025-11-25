@@ -4,9 +4,7 @@ import * as path from "path";
 import * as fs from "fs/promises";
 import { fileURLToPath } from "url";
 import * as dotenv from "dotenv";
-import { LLMService } from "./llm.js";
-import { GroqLLMService } from "./groq-llm.js";
-import { ILLMService } from "./llm-interface.js";
+import { LLMOrchestrator, ProviderStatus } from "./orchestrator.js";
 import { Config } from "./types.js";
 import { Agent } from "./agent.js";
 import { render } from "ink";
@@ -87,7 +85,7 @@ const BANNER = `
 ██║  ██║     ███████╗   ╚██████╔╝   ███████╗  
 ╚═╝  ╚═╝     ╚══════╝    ╚═════╝    ╚══════╝ 
 
-║   AI Coding Assistant - Local Mode  ║
+║   AI Coding Assistant - Universal Mode  ║
 
 
 `;
@@ -144,15 +142,36 @@ async function main() {
   console.log(BANNER);
   console.log("Starting Azul...");
 
-  // Store initialization messages to send to UI
-  const initMessages: any[] = [];
+  const queuedMessages: any[] = [];
+  let uiReady = false;
+
+  const messageHandlers: {
+    onMessage: (message: any) => void;
+    onApproval: (requestId: string, approved: boolean) => void;
+  } = {
+    onMessage: (message: any) => {
+      queuedMessages.push(message);
+    },
+    onApproval: () => {},
+  };
+
+  const enqueueMessage = (message: any) => {
+    const enrichedMessage = {
+      ...message,
+      timestamp: message.timestamp ?? Date.now(),
+    };
+    if (uiReady) {
+      messageHandlers.onMessage(enrichedMessage);
+    } else {
+      queuedMessages.push(enrichedMessage);
+    }
+  };
 
   // Add .env loading messages to init messages (loaded at module level)
   if (envLoadMessages.length > 0) {
-    initMessages.push({
+    enqueueMessage({
       type: "system",
       message: envLoadMessages.join("\n"),
-      timestamp: Date.now(),
     });
   }
 
@@ -162,21 +181,12 @@ async function main() {
   console.log(`   Configuration loaded`);
   console.log(`   Model: ${config.modelPath}`);
   console.log(`   Context Size: ${config.contextSize}`);
-  initMessages.push({
+  enqueueMessage({
     type: "system",
     message: configMsg,
-    timestamp: Date.now(),
   });
 
-  // Initialize mode tracking
-  let currentMode: "local" | "api" = "local";
-  let currentLLM: ILLMService;
-
-  // Initialize Local LLM
-  const localLLM = new LLMService(config.contextSize, config.maxTokens);
-  
   // Resolve model path relative to config file location, not current working directory
-  // This allows the model to be found regardless of where azul is called from
   let modelPath: string;
   if (path.isAbsolute(config.modelPath)) {
     modelPath = config.modelPath;
@@ -198,92 +208,90 @@ async function main() {
       }
     }
   }
-  
+
+  // Gather API Keys
+  const providerConfig = {
+    hfApiKey: process.env.HF_API_KEY,
+    hfModel: process.env.HF_MODEL,
+    geminiApiKey: process.env.GEMINI_API_KEY,
+    geminiModel: process.env.GEMINI_MODEL,
+    groqApiKey: process.env.GROK_API_KEY || process.env.GROQ_API_KEY,
+    groqModel: process.env.GROK_MODEL || process.env.GROQ_MODEL,
+    openRouterApiKey: process.env.OPENROUTER_API_KEY,
+    openRouterModel: process.env.OPENROUTER_MODEL,
+    localModelPath: modelPath,
+    localContextSize: config.contextSize,
+    localMaxTokens: config.maxTokens,
+  };
+
+  // Initialize mode tracking
+  let currentMode: "local" | "api" = "local";
+
+  const handleProviderStatus = (status: ProviderStatus) => {
+    enqueueMessage({
+      type: "provider_status",
+      status,
+    });
+
+    if (status.fallback && status.reason && status.previousProvider) {
+      enqueueMessage({
+        type: "system",
+        message: `Fallback (${status.previousProvider} → ${status.provider}): ${status.reason}`,
+      });
+    } else if (!status.fallback) {
+      const modeLabel = status.mode === "api" ? "API" : "Local";
+      enqueueMessage({
+        type: "system",
+        message: `${modeLabel} provider: ${status.provider} (${status.model})`,
+      });
+    }
+  };
+
+  const apiOrchestrator = new LLMOrchestrator(providerConfig, true, handleProviderStatus);
+  const localOrchestrator = new LLMOrchestrator(providerConfig, false, handleProviderStatus);
+
+  // Initialize Local by default
   try {
-    await localLLM.initialize(modelPath);
+    await localOrchestrator.initialize();
     console.log("   Local LLM initialized\n");
-    initMessages.push({
+    enqueueMessage({
       type: "system",
       message: "Local LLM initialized",
-      timestamp: Date.now(),
     });
-    currentLLM = localLLM;
   } catch (error) {
     console.error(" Failed to initialize local LLM:", error);
-    console.error("\nMake sure the model file exists at:", modelPath);
-    process.exit(1);
-  }
-
-  // Initialize Groq API (if API key is available)
-  const groqApiKey = process.env.GROK_API_KEY;
-  const groqModel = process.env.GROK_MODEL;
-  let apiLLM: GroqLLMService | null = null;
-  
-  // Debug: Show what we found
-  let envDebugMsg = "";
-  if (groqApiKey) {
-    const maskedKey = groqApiKey.length > 11 
-      ? `${groqApiKey.substring(0, 7)}...${groqApiKey.substring(groqApiKey.length - 4)}`
-      : '***';
-    const msg = `Found GROK_API_KEY: ${maskedKey} (length: ${groqApiKey.length})`;
-    console.log(`   ${msg}`);
-    envDebugMsg = msg;
-    if (groqModel) {
-      const modelMsg = `Found GROK_MODEL: ${groqModel}`;
-      console.log(`   ${modelMsg}`);
-      envDebugMsg += `\n${modelMsg}`;
-    }
-  } else {
-    const msg = "GROK_API_KEY not found in environment variables\nChecked process.env.GROK_API_KEY";
-    console.log(`   ${msg}`);
-    envDebugMsg = msg;
-  }
-  
-  if (groqApiKey && groqApiKey.trim().length > 0) {
-    try {
-      apiLLM = new GroqLLMService(groqApiKey.trim(), groqModel?.trim());
-      await apiLLM.initialize({});
-      const msg = "Groq API initialized (use /api to switch)";
-      console.log(`   ${msg}\n`);
-      initMessages.push({
-        type: "system",
-        message: `${envDebugMsg}\n${msg}`,
-        timestamp: Date.now(),
-      });
-    } catch (error: any) {
-      const msg = `Warning: Failed to initialize Groq API: ${error.message}\nContinuing with local mode only`;
-      console.error(`   ${msg}\n`);
-      initMessages.push({
-        type: "error",
-        message: `${envDebugMsg}\n${msg}`,
-        timestamp: Date.now(),
-      });
-    }
-  } else {
-    const msg = "Groq API key not available - continuing with local mode only";
-    console.log(`   ${msg}\n`);
-    initMessages.push({
-      type: "system",
-      message: `${envDebugMsg}\n${msg}`,
-      timestamp: Date.now(),
+    enqueueMessage({
+      type: "error",
+      message: `Failed to initialize local LLM: ${error}`,
     });
   }
 
-  // Create message handler for UI
-  const messageHandlers: {
-    onMessage: (message: any) => void;
-    onApproval: (requestId: string, approved: boolean) => void;
-  } = {
-    onMessage: () => {},
-    onApproval: () => {},
-  };
+  // Pre-initialize API if keys exist (optional, but good for fast switching)
+  // Just check if keys exist to show status
+  const apiKeysExist = providerConfig.hfApiKey || providerConfig.geminiApiKey || providerConfig.groqApiKey || providerConfig.openRouterApiKey;
+  if (apiKeysExist) {
+    try {
+        await apiOrchestrator.initialize();
+        const msg = "API Providers initialized (HF, Gemini, Groq, OpenRouter)";
+        console.log(`   ${msg}\n`);
+        enqueueMessage({
+          type: "system",
+          message: msg,
+        });
+    } catch (e) {
+        // ignore initialization errors for API until switched
+         console.log(`   API initialization warning: ${e}\n`);
+    }
+  }
+
+  let currentLLM = localOrchestrator;
 
   // Track working directory (starts from where azul was called)
   let workingDirectory: string = process.cwd();
 
   // Create agent with direct callback and working directory context
   const agent = new Agent((message: any) => {
-    messageHandlers.onMessage(message);
+    enqueueMessage(message);
   }, currentLLM, workingDirectory);
   
   // Update agent's working directory when it changes
@@ -318,10 +326,9 @@ async function main() {
       // Check if directory exists
       const stats = await fs.stat(resolvedPath);
       if (!stats.isDirectory()) {
-        messageHandlers.onMessage({
+        enqueueMessage({
           type: "error",
           message: `Not a directory: ${dirPath}`,
-          timestamp: Date.now(),
         });
         return;
       }
@@ -330,16 +337,14 @@ async function main() {
       process.chdir(workingDirectory); // Also change Node's cwd
       updateAgentWorkingDirectory(); // Update agent's working directory
       
-      messageHandlers.onMessage({
+      enqueueMessage({
         type: "system",
         message: `Changed directory to: ${workingDirectory}`,
-        timestamp: Date.now(),
       });
     } catch (error: any) {
-      messageHandlers.onMessage({
+      enqueueMessage({
         type: "error",
         message: `cd: ${error.message}`,
-        timestamp: Date.now(),
       });
     }
   };
@@ -376,16 +381,14 @@ async function main() {
         dirs.length === 0 && files.length === 0 ? "(empty)" : "",
       ].filter(Boolean).join("\n");
       
-      messageHandlers.onMessage({
+      enqueueMessage({
         type: "system",
         message: output,
-        timestamp: Date.now(),
       });
     } catch (error: any) {
-      messageHandlers.onMessage({
+      enqueueMessage({
         type: "error",
         message: `ls: ${error.message}`,
-        timestamp: Date.now(),
       });
     }
   };
@@ -393,30 +396,27 @@ async function main() {
   // Handle mode switching
   const handleSwitchMode = (mode: "local" | "api") => {
     if (mode === "api") {
-      if (apiLLM) {
+      if (apiKeysExist) {
         currentMode = "api";
-        currentLLM = apiLLM;
-        agent.setLLM(apiLLM);
-        messageHandlers.onMessage({
+        currentLLM = apiOrchestrator;
+        agent.setLLM(apiOrchestrator);
+        enqueueMessage({
           type: "mode_changed",
           mode: "api",
-          timestamp: Date.now(),
         });
       } else {
-        messageHandlers.onMessage({
+        enqueueMessage({
           type: "error",
-          message: "Groq API not available. Make sure GROK_API_KEY is set in .env file.",
-          timestamp: Date.now(),
+          message: "No API keys found in .env (HF_API_KEY, GEMINI_API_KEY, GROK_API_KEY/GROQ_API_KEY, OPENROUTER_API_KEY)",
         });
       }
     } else if (mode === "local") {
       currentMode = "local";
-      currentLLM = localLLM;
-      agent.setLLM(localLLM);
-      messageHandlers.onMessage({
+      currentLLM = localOrchestrator;
+      agent.setLLM(localOrchestrator);
+      enqueueMessage({
         type: "mode_changed",
         mode: "local",
-        timestamp: Date.now(),
       });
     }
   };
@@ -428,10 +428,9 @@ async function main() {
       onApproval: messageHandlers.onApproval,
       onMessage: (handler: (message: any) => void) => {
         messageHandlers.onMessage = handler;
-        // Send initialization messages to UI once handler is ready
-        setTimeout(() => {
-          initMessages.forEach(msg => handler(msg));
-        }, 100);
+        uiReady = true;
+        queuedMessages.forEach((msg) => handler(msg));
+        queuedMessages.length = 0;
       },
       onReset: handleReset,
       onSwitchMode: handleSwitchMode,
@@ -444,7 +443,8 @@ async function main() {
   // Graceful shutdown
   const shutdown = async () => {
     console.log("\n\n Shutting down...");
-    await currentLLM.cleanup();
+    await localOrchestrator.cleanup();
+    await apiOrchestrator.cleanup();
     console.log(" Goodbye!");
     process.exit(0);
   };

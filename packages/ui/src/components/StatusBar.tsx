@@ -1,12 +1,13 @@
 import React from "react";
 import { Box, Text } from "ink";
-import { TokenStats } from "../types.js";
+import { TokenStats, ProviderStatusMessage } from "../types.js";
 
 interface StatusBarProps {
   connected: boolean;
   modelName?: string;
   tokenStats: TokenStats;
   mode?: "local" | "api";
+  providerStatus?: ProviderStatusMessage;
 }
 
 export const StatusBar: React.FC<StatusBarProps> = ({
@@ -14,6 +15,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   modelName = "Qwen 2.5 Coder",
   tokenStats,
   mode = "local",
+  providerStatus,
 }) => {
   const formatTokens = (tokens: number): string => {
     if (tokens >= 1_000_000) {
@@ -41,8 +43,21 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   const formattedCumulative = formatTokens(cumulativeTotal);
   const tokensPerSec = tokenStats.tokensPerSecond || 0;
 
-  const modeLabel =
-    mode === "api" ? "API • Groq" : `Local • ${modelName}`;
+  let modeLabel: string;
+  let modeColor: string = mode === "api" ? "yellow" : "cyan";
+
+  if (providerStatus) {
+    const suffix = providerStatus.model ? ` (${providerStatus.model})` : "";
+    if (providerStatus.mode === "api") {
+      modeLabel = `API • ${providerStatus.provider}${suffix}`;
+      modeColor = providerStatus.fallback ? "yellowBright" : "yellow";
+    } else {
+      modeLabel = `Local • ${providerStatus.provider}${suffix}`;
+      modeColor = "cyan";
+    }
+  } else {
+    modeLabel = mode === "api" ? "API • Remote Cascade" : `Local • ${modelName}`;
+  }
 
   return (
     <Box
@@ -65,7 +80,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         </Text>
       </Box>
       <Box justifyContent="space-between" width="100%" marginTop={1}>
-        <Text color={mode === "api" ? "yellow" : "cyan"}>
+        <Text color={modeColor}>
           {modeLabel}
         </Text>
         <Text dimColor>
@@ -74,6 +89,13 @@ export const StatusBar: React.FC<StatusBarProps> = ({
           {tokensPerSec > 0 ? ` · ${tokensPerSec.toFixed(1)} tokens/s` : ""}
         </Text>
       </Box>
+      {providerStatus?.fallback && providerStatus.reason && (
+        <Box marginTop={1}>
+          <Text color="yellow">
+            Fallback: {providerStatus.reason}
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 };

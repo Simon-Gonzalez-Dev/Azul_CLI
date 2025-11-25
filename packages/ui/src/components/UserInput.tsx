@@ -13,7 +13,7 @@ const COMMANDS = [
   { name: "clear", description: "Clear the screen" },
   { name: "cd", description: "Change directory (e.g., /cd /path/to/dir)" },
   { name: "ls", description: "List directory contents (e.g., /ls or /ls /path)" },
-  { name: "api", description: "Switch to API mode (Groq)" },
+  { name: "api", description: "Switch to API mode (provider cascade)" },
   { name: "local", description: "Switch to local LLM mode" },
   { name: "quit", description: "Exit the application" },
 ];

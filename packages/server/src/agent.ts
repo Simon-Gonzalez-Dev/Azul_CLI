@@ -16,8 +16,6 @@ export class Agent {
   private systemPrompt: string = "";
   private sendMessage: MessageCallback;
   private pendingApprovals: Map<string, { resolve: (approved: boolean) => void }> = new Map();
-  private maxLoopIterations: number = 10;
-  private currentLoopCount: number = 0;
   private streamingResponse: string = "";
   private workingDirectory: string;
 
@@ -132,7 +130,6 @@ When calling tools, you MUST provide ALL required parameters. The tool system wi
   }
 
   async handleUserMessage(content: string): Promise<void> {
-    this.currentLoopCount = 0;
     this.conversationHistory.push({
       role: "user",
       content,
@@ -149,7 +146,6 @@ When calling tools, you MUST provide ALL required parameters. The tool system wi
   reset(): void {
     this.conversationHistory = [];
     this.llm.resetTokenStats();
-    this.currentLoopCount = 0;
     
     this.pendingApprovals.forEach((pending) => {
       pending.resolve(false);
@@ -158,20 +154,6 @@ When calling tools, you MUST provide ALL required parameters. The tool system wi
   }
 
   private async runAgentLoop(): Promise<void> {
-    if (this.currentLoopCount >= this.maxLoopIterations) {
-      this.sendMessage({
-        type: "error",
-        message: "Maximum loop iterations reached. Stopping to prevent infinite loop.",
-      });
-      this.sendMessage({
-        type: "agent_response",
-        content: "I've reached the maximum number of iterations. Please rephrase your request or try a different approach.",
-      });
-      return;
-    }
-
-    this.currentLoopCount++;
-
     try {
       this.sendMessage({
         type: "agent_thinking",
