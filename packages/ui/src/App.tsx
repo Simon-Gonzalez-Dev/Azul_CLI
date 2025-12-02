@@ -4,6 +4,7 @@ import { LogView } from "./components/LogView.js";
 import { UserInput } from "./components/UserInput.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { PermissionModal } from "./components/PermissionModal.js";
+import { Banner } from "./components/Banner.js";
 import { Message, AppState, ApprovalRequest, ProviderStatusMessage } from "./types.js";
 
 export interface AppProps {
@@ -39,16 +40,25 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
   const [mode, setMode] = useState<"local" | "api">(currentMode);
 
   useEffect(() => {
+    // Clear all messages on mount - start fresh with only banner
+    // This ensures clean state even if component remounts
+    setState((prev) => ({
+      ...prev,
+      messages: [],
+      tokenStats: {
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        tokensPerSecond: 0,
+        generationTimeMs: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+      },
+    }));
+
     // Register message handler
     onMessage((message: any) => {
       handleServerMessage(message);
-    });
-
-    // Send connected message
-    handleServerMessage({
-      type: "connected",
-      message: "Connected to Azul server",
-      timestamp: Date.now(),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // onMessage is stable, handleServerMessage is defined in component
@@ -80,61 +90,65 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
           },
         ],
       }));
-    } else if (message.type === "agent_response_stream") {
-      // Handle streaming response - update the last streaming message
+    } else if (message.type === "agent_stream") {
+      // Unified streaming message handler - single source of truth
       setState((prev) => {
+        const streamId = message.streamId;
         const newMessages = [...prev.messages];
-        const lastStreamingIndex = newMessages.findIndex(
-          (m, idx) => m.type === "agent_response_stream" && idx === newMessages.length - 1
-        );
+        
+        // Find existing stream by streamId (O(1) lookup potential with map, but array is fine for now)
+        let streamingIndex = -1;
+        for (let i = newMessages.length - 1; i >= 0; i--) {
+          if (newMessages[i].type === "agent_stream" && newMessages[i].streamId === streamId) {
+            streamingIndex = i;
+            break;
+          }
+        }
 
-        if (lastStreamingIndex >= 0) {
-          newMessages[lastStreamingIndex] = {
-            ...newMessages[lastStreamingIndex],
-            content: message.content,
-            timestamp: Date.now(),
+        // Don't add empty streams (filter in state management, not render)
+        const hasContent = message.thought || (message.content && message.content.trim()) || (message.toolCalls && message.toolCalls.length > 0);
+        if (!hasContent && !message.isComplete) {
+          return prev; // Skip empty non-complete streams
+        }
+
+        if (streamingIndex >= 0) {
+          // Update existing stream
+          newMessages[streamingIndex] = {
+            ...newMessages[streamingIndex],
+            ...message,
+            timestamp: newMessages[streamingIndex].timestamp || Date.now(),
           };
         } else {
+          // Create new stream
           newMessages.push({
-            type: "agent_response_stream",
-            content: message.content,
+            ...message,
             timestamp: Date.now(),
           });
         }
 
-        return { ...prev, messages: newMessages };
+        // Update token stats if provided
+        const updatedState: Partial<AppState> = { messages: newMessages };
+        if (message.stats) {
+          updatedState.tokenStats = message.stats;
+        }
+
+        return { ...prev, ...updatedState };
       });
-    } else if (message.type === "agent_thinking") {
-      // Clear thinking message if empty, otherwise add/update it
-      if (!message.content) {
-        setState((prev) => ({
-          ...prev,
-          messages: prev.messages.filter((m) => m.type !== "agent_thinking"),
-        }));
-      } else {
-        setState((prev) => {
-          const newMessages = [...prev.messages];
-          const lastThinkingIndex = newMessages.findIndex(
-            (m) => m.type === "agent_thinking"
-          );
-
-          if (lastThinkingIndex >= 0) {
-            newMessages[lastThinkingIndex] = {
-              ...newMessages[lastThinkingIndex],
-              content: message.content,
-              timestamp: Date.now(),
-            };
-          } else {
-            newMessages.push({
-              type: "agent_thinking",
-              content: message.content,
-              timestamp: Date.now(),
-            });
-          }
-
-          return { ...prev, messages: newMessages };
-        });
-      }
+    } else if (message.type === "token_stats") {
+      // Token stats can come separately or integrated in stream
+      const timestamp = Date.now();
+      setState((prev) => ({
+        ...prev,
+        tokenStats: message.stats,
+        messages: [
+          ...prev.messages.filter((m) => m.type !== "token_stats"),
+          {
+            type: "token_stats",
+            stats: message.stats,
+            timestamp,
+          },
+        ],
+      }));
     } else if (message.type === "mode_changed") {
       setMode(message.mode);
       setState((prev) => ({
@@ -166,27 +180,14 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
         ],
       }));
     } else {
-      // Replace streaming message with final response if it exists
-      if (message.type === "agent_response") {
-        setState((prev) => {
-          const newMessages = prev.messages.filter(
-            (m) => m.type !== "agent_response_stream"
-          );
-          newMessages.push({
-            ...message,
-            timestamp: Date.now(),
-          });
-          return { ...prev, messages: newMessages };
-        });
-      } else {
-        setState((prev) => ({
-          ...prev,
-          messages: [
-            ...prev.messages,
-            { ...message, timestamp: Date.now() },
-          ],
-        }));
-      }
+      // All other messages
+      setState((prev) => ({
+        ...prev,
+        messages: [
+          ...prev.messages,
+          { ...message, timestamp: Date.now() },
+        ],
+      }));
     }
   };
 
@@ -219,13 +220,9 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
       if (command === "clear") {
         setState((prev) => ({
           ...prev,
-          messages: prev.messages.filter((m) => m.type === "token_stats"), // Keep token stats
+          messages: [], // Clear all messages including token stats
         }));
-        handleServerMessage({
-          type: "system",
-          message: "Screen cleared.",
-          timestamp: Date.now(),
-        });
+        // Don't send system message - just clear silently
         return;
       }
       
@@ -268,7 +265,7 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
 /clear    - Clear the screen (keeps memory)
 /cd <dir> - Change directory (e.g., /cd /path/to/dir or /cd ..)
 /ls [dir] - List directory contents (e.g., /ls or /ls /path)
-/api      - Switch to API mode (HF → Gemini → Groq → OpenRouter)
+/api      - Switch to API mode (HF -> Gemini -> Groq -> OpenRouter)
 /local    - Switch to local LLM mode
 /quit     - Exit the application
 
@@ -303,6 +300,7 @@ All commands must start with /. Type / and press Tab to see available commands.`
 
   return (
     <Box flexDirection="column" height="100%">
+      <Banner />
       <StatusBar
         connected={state.connected}
         tokenStats={state.tokenStats}

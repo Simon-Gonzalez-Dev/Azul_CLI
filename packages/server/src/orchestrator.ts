@@ -69,15 +69,10 @@ export class LLMOrchestrator implements ILLMService {
         initialized: false,
       });
     } else {
+      // API provider order: HuggingFace, Groq, OpenRouter, Gemini (Gemini last)
       if (this.config.hfApiKey) {
         this.providers.push({
           instance: new HuggingFaceProvider(this.config.hfApiKey, this.config.hfModel),
-          initialized: false,
-        });
-      }
-      if (this.config.geminiApiKey) {
-        this.providers.push({
-          instance: new GeminiProvider(this.config.geminiApiKey, this.config.geminiModel),
           initialized: false,
         });
       }
@@ -93,6 +88,12 @@ export class LLMOrchestrator implements ILLMService {
             this.config.openRouterApiKey,
             this.config.openRouterModel
           ),
+          initialized: false,
+        });
+      }
+      if (this.config.geminiApiKey) {
+        this.providers.push({
+          instance: new GeminiProvider(this.config.geminiApiKey, this.config.geminiModel),
           initialized: false,
         });
       }

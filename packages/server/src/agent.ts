@@ -1,4 +1,3 @@
-import * as path from "path";
 import * as fs from "fs/promises";
 import { ILLMService } from "./llm-interface.js";
 import { ChatMessage, ToolCall, ToolDefinition } from "./types.js";
@@ -39,101 +38,79 @@ export class Agent {
   }
 
   private initializeSystemPrompt(): void {
-    this.systemPrompt = `You are Azul, an elite autonomous coding agent with direct CLI and Filesystem access. 
-Your goal is to complete programming tasks efficiently, accurately, and with minimal token usage.
+    this.systemPrompt = `# ROLE: Azul - Autonomous Coding Agent
 
-# CRITICAL IDENTITY RULES
-1. **YOU HAVE ACCESS.** Never say "I don't have access" or "I cannot see." You have tools. USE THEM.
-2. **BE PROACTIVE.** If the user says "fix the html" and you don't see a path, do NOT ask "which file?". Use list_dir immediately to find it yourself.
-3. **SILENT EXECUTION.** Do not chatter. Do not print code to the chat if you are about to write it to a file.
+You are Azul, an elite autonomous coding agent with direct filesystem and CLI access. Your purpose is to complete programming tasks autonomously, efficiently, and accurately.
 
-# THE "AMBIGUITY" PROTOCOL (Use when user is vague)
-If the user request is generic (e.g., "update the html page", "fix the bug", "refactor the code") and no file path is provided:
-1. **IMMEDIATELY call list_dir** with path "." to inspect the current directory.
-2. **Scan for relevant files** based on the user's intent (e.g., *.html* files for "html page").
-3. **If a likely candidate is found**, READ IT immediately using read_file.
-4. **Proceed with the task** using that context.
-5. Only ask the user for clarification if there are MULTIPLE conflicting candidates (e.g., 5 different HTML files).
+## CORE IDENTITY PRINCIPLES
 
-# CORE OPERATING RULES
+**Principle 1: Autonomous Action**
+- You have full access to tools. Never claim you "cannot see" or "don't have access"
+- When information is missing, use tools to discover it yourself
+- Only ask users for clarification when multiple valid interpretations exist
 
-1. **ACTION OVER CHATTER**: 
-   - Do NOT describe code changes in the chat before making them. 
-   - Do NOT output "Here is the code:" followed by a block of code if you intend to use a tool to write it immediately after. 
-   - **JUST CALL THE TOOL.**
+**Principle 2: Silent Execution**
+- Actions speak louder than words. Execute tools instead of describing actions
+- Never show code in chat that you're about to write to a file
+- Avoid meta-commentary like "I will now..." or "Here's the code:"
 
-2. **EXPLORE FIRST**: 
-   - Never guess file paths or contents. 
-   - Always start by mapping the territory using list_dir and read_file. 
-   - If a file doesn't exist, verify the directory structure before creating it.
+**Principle 3: Exploration Before Assumption**
+- Never guess file paths, structures, or contents
+- Always verify context using list_dir and read_file before making changes
+- Map the codebase territory before acting
 
-3. **SURGICAL EDITING (The "Patch" Protocol)**:
-   - **PREFER edit_file (Search & Replace) over write_file**.
-   - write_file overwrites the ENTIRE file. Only use it for creating new files or very small files (<50 lines).
-   - For existing files, locate the unique block of code you want to change and provide a replacement.
-   - The search block must match the file content EXACTLY (including whitespace).
+**Principle 4: Surgical Precision**
+- Prefer edit_file (search & replace) over write_file for existing files
+- Use write_file only for new files or very small files (<50 lines)
+- Match search blocks EXACTLY including whitespace and indentation
 
-4. **VERIFICATION**:
-   - After editing code, you are encouraged to run linter checks, build commands, or tests via execute_command to verify your changes worked.
-   - If a tool fails, read the error, analyze the cause, and self-correct.
+---
 
-# TOOL USAGE - CRITICAL: ALL PARAMETERS ARE REQUIRED
+# OPERATIONAL PROTOCOLS
 
-When calling tools, you MUST provide ALL required parameters. The tool system will reject calls with missing parameters.
+## Protocol A: Ambiguity Resolution
 
-## Tool: list_dir
-**Purpose:** List contents of a directory
-**Required Parameters:**
-- path: <directory_path>
+When user requests are vague (e.g., "fix the bug", "update the HTML", "refactor this"):
+1. Execute list_dir with path "." to discover the codebase structure
+2. Identify relevant files based on context clues
+3. Read candidate files using read_file
+4. Proceed with the task using discovered context
+5. Only request clarification if multiple conflicting candidates exist (>3 similar files)
 
-## Tool: read_file
-**Purpose:** Read file contents
-**Required Parameters:**
-- path: <file_path>
+## Protocol B: Error Recovery
 
-## Tool: edit_file
-**Purpose:** Surgical file editing via search & replace
-**Required Parameters:**
-- path: <file_path>
-- search: <exact_code_block_to_find>
-- replace: <new_code_block>
+When a tool fails:
+1. Read the error message carefully
+2. Analyze root cause (path issues, syntax errors, missing dependencies)
+3. Self-correct by fixing the issue and retrying
+4. If stuck after 2 attempts, explain the blocker in <thought> tags
 
-**IMPORTANT:** The search parameter must match the file content EXACTLY including whitespace. Copy the search block from a previous read_file output.
+## Protocol C: Verification
 
-## Tool: write_file
-**Purpose:** Create new files or completely overwrite existing files
-**Required Parameters:**
-- path: <file_path>
-- content: <complete_file_content>
+After making code changes, run linters/formatters/build commands via execute_command and verify changes work.
 
-## Tool: execute_command
-**Purpose:** Execute shell commands
-**Required Parameters:**
-- command: <shell_command>
+---
 
-**IMPORTANT regarding execute_command:**
-If you run a command that starts a server (like \`npm run dev\`), the tool will run it for 5 seconds and then stop it to show you the initial logs.
-- If you see "Command timed out... output captured", check the logs.
-- If the logs say "Server running" or "Ready", consider the task SUCCESSFUL.
-- Do not try to run the server endlessly; just verify it starts without errors.
+# BEHAVIORAL CONSTRAINTS
 
-## Tool: search_files
-**Purpose:** Search for text patterns in files
-**Required Parameters:**
-- pattern: <search_pattern>
-- directory: <directory_path>
+**MUST Do:**
+- Use tools to discover information yourself
+- Execute actions instead of describing them
+- Verify changes after making them
+- Use edit_file for existing files (write_file only for new files <50 lines)
+- Put all reasoning in <thought> tags
+- Put all tool calls in <tool_code> tags
 
-# RESPONSE FORMATTING
+**MUST NOT Do:**
+- Claim you don't have access (you have tools)
+- Ask users for file paths when you can discover them
+- Show code in chat before writing it to files
+- Use write_file on existing files
+- Output text outside XML tags
+- Use markdown formatting
+- Describe actions instead of executing them
 
-- **Strict XML Enforcement:** You must use the XML tags <thought> and <tool_code> for all responses.
-- **Thinking:** Use <thought> tags for planning and reasoning.
-- **Tool Execution:** Use <tool_code> tags for all tool calls.
-- **No Chatter:** Text outside these tags is strictly forbidden and will be ignored.
-
-# CRITICAL REMINDER
-- ALL tool parameters listed above are REQUIRED. Do not omit any parameters.
-- Provide actual values for all placeholders (<parameter_name>) when calling tools.
-- The tool system validates all parameters and will reject calls with missing parameters.`;
+Remember: You are an autonomous agent. Act first, explain if necessary. Tools are your superpower—use them.`;
   }
 
   async handleUserMessage(content: string): Promise<void> {
@@ -162,61 +139,114 @@ If you run a command that starts a server (like \`npm run dev\`), the tool will 
 
   private async runAgentLoop(): Promise<void> {
     try {
-      this.sendMessage({
-        type: "agent_thinking",
-        content: "Thinking...",
-      });
-
+      // Stream state machine
+      type StreamState = "idle" | "streaming" | "complete" | "tools_executing" | "done";
+      let streamState: StreamState = "idle";
+      const streamId = `stream_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      
       this.streamingResponse = "";
-      let isFirstToken = true;
-      const STREAM_MIN_CHARS = 32;
-      const STREAM_INTERVAL_MS = 80;
-      let lastStreamLength = 0;
-      let lastStreamTime = 0;
+      let lastParsedThought = "";
+      let parsedToolCalls: ToolCall[] = [];
+      let lastStreamUpdate = 0;
+      const STREAM_UPDATE_THROTTLE_MS = 16; // ~60fps max update rate
+      
+      // Real-time XML parser for streaming - enhanced to parse tool calls
+      const parseStreamingContent = (content: string): { 
+        thought?: string; 
+        toolCalls: ToolCall[];
+        rawContent: string;
+      } => {
+        // Extract thought tag content (even if incomplete)
+        const thoughtMatch = content.match(/<thought>([\s\S]*?)(?:<\/thought>|$)/i);
+        const thought = thoughtMatch ? thoughtMatch[1].trim() : undefined;
+        
+        // Parse complete tool_code blocks in real-time
+        const toolCalls: ToolCall[] = [];
+        const toolCodeRegex = /<tool_code>([\s\S]*?)<\/tool_code>/gi;
+        let match;
+        
+        while ((match = toolCodeRegex.exec(content)) !== null) {
+          const toolBlock = match[1];
+          const parsed = this.parseToolBlock(toolBlock);
+          if (parsed) {
+            toolCalls.push(parsed);
+          }
+        }
+        
+        return { thought, toolCalls, rawContent: content };
+      };
 
-      const flushStream = (content: string) => {
-        this.streamingResponse = content;
-        lastStreamLength = content.length;
-        lastStreamTime = Date.now();
-        this.sendMessage({
-          type: "agent_response_stream",
-          content,
-        });
+      // Unified stream handler - single message type, always active
+      const handleStream = (accumulatedText: string) => {
+        this.streamingResponse = accumulatedText;
+        
+        // Throttle updates for performance (but ensure we always get final update)
+        const now = Date.now();
+        const shouldUpdate = (now - lastStreamUpdate) >= STREAM_UPDATE_THROTTLE_MS;
+        
+        if (!shouldUpdate && streamState !== "complete") {
+          return; // Skip this update, will catch up on next
+        }
+        
+        lastStreamUpdate = now;
+        streamState = "streaming";
+        
+        // Parse streaming content in real-time
+        const parsed = parseStreamingContent(accumulatedText);
+        
+        // Update thought if it changed
+        if (parsed.thought && parsed.thought !== lastParsedThought) {
+          lastParsedThought = parsed.thought;
+        }
+        
+        // Track new tool calls
+        if (parsed.toolCalls.length > parsedToolCalls.length) {
+          parsedToolCalls = parsed.toolCalls;
+        }
+        
+        // Send unified streaming message (only if we have content to show)
+        const hasContent = parsed.thought || parsed.rawContent.trim() || parsedToolCalls.length > 0;
+        if (hasContent) {
+          this.sendMessage({
+            type: "agent_stream",
+            streamId,
+            state: streamState,
+            thought: parsed.thought || lastParsedThought || undefined,
+            content: parsed.rawContent, // Keep raw for parsing, but UI will format
+            toolCalls: parsedToolCalls.length > 0 ? parsedToolCalls : undefined,
+            isComplete: false,
+          });
+        }
       };
 
       const { response, toolCalls, stats } = await this.llm.getCompletion(
         this.systemPrompt,
         this.conversationHistory,
         tools,
-        (accumulatedText: string) => {
-          if (isFirstToken) {
-            isFirstToken = false;
-            this.sendMessage({
-              type: "agent_thinking",
-              content: "",
-            });
-          }
-          
-          if (accumulatedText && accumulatedText.length > lastStreamLength) {
-            const now = Date.now();
-            const sizeDelta = accumulatedText.length - lastStreamLength;
-            const timeDelta = now - lastStreamTime;
-
-            if (sizeDelta >= STREAM_MIN_CHARS || timeDelta >= STREAM_INTERVAL_MS) {
-              flushStream(accumulatedText);
-            }
-          }
-        }
+        handleStream
       );
 
-      // Ensure the final streamed content is flushed
-      if (response && response.length > lastStreamLength) {
-        flushStream(response);
-      }
-
+      // Finalize streaming - parse final content
+      const finalContent = response || this.streamingResponse || "";
+      streamState = "complete";
+      
       const totalStats = this.llm.getTokenStats();
+      const finalParsed = parseStreamingContent(finalContent);
+      
+      // Update parsed tool calls with final parse
+      if (finalParsed.toolCalls.length > 0) {
+        parsedToolCalls = finalParsed.toolCalls;
+      }
+      
+      // Send final unified stream message with completion
       this.sendMessage({
-        type: "token_stats",
+        type: "agent_stream",
+        streamId,
+        state: "complete",
+        thought: finalParsed.thought || lastParsedThought || undefined,
+        content: finalContent,
+        toolCalls: parsedToolCalls.length > 0 ? parsedToolCalls : undefined,
+        isComplete: true,
         stats: {
           ...stats,
           cumulativeInputTokens: totalStats.inputTokens,
@@ -227,57 +257,41 @@ If you run a command that starts a server (like \`npm run dev\`), the tool will 
         },
       });
 
-      // Handle native tool calls (from Groq API)
-      if (toolCalls && toolCalls.length > 0) {
-        // Add assistant message with tool calls to history
-        this.conversationHistory.push({
-          role: "assistant",
-          content: response || null, // Can be null when only tool calls are present
-          tool_calls: toolCalls,
-        });
-
-        // Execute tools silently
-        await this.executeToolCalls(toolCalls);
-        
-        // Loop continues automatically with tool results
-        await this.runAgentLoop();
-        return;
-      }
-
-      // Attempt to parse the response using the new XML parser
-      const parsedResponse = this.parseResponse(response || this.streamingResponse || "");
-
-      // If thoughts are present, send them
-      if (parsedResponse.thought) {
-        this.sendMessage({
-            type: "agent_thought",
-            content: parsedResponse.thought
-        });
-      }
+      // Parse the response using XML parser (model agnostic - no native function calling)
+      const parsedResponse = this.parseResponse(finalContent);
 
       // If parsing succeeded and we have tool calls
       if (parsedResponse.tool_calls && parsedResponse.tool_calls.length > 0) {
+        streamState = "tools_executing";
         this.conversationHistory.push({
           role: "assistant",
           content: parsedResponse.thought || "I'll use tools to complete this task.",
           tool_calls: parsedResponse.tool_calls,
         });
         
+        // Update stream state to show tools executing
+        this.sendMessage({
+          type: "agent_stream",
+          streamId,
+          state: "tools_executing",
+          thought: parsedResponse.thought || lastParsedThought || undefined,
+          content: finalContent,
+          toolCalls: parsedResponse.tool_calls,
+          isComplete: true,
+        });
+        
         await this.executeToolCalls(parsedResponse.tool_calls);
+        
+        // Mark as done after tools execute
+        streamState = "done";
         await this.runAgentLoop();
         return;
       }
       
-      // If no tool calls but we have thought, treated as final response? 
-      // The prompt says "Text outside these tags is strictly forbidden".
-      // But if the model provides <thought> and no <tool_code>, maybe it's just thinking or answering.
-      // If ONLY thought is provided, treat it as response.
+      // If no tool calls but we have thought, treat as final response
       if (parsedResponse.thought && (!parsedResponse.tool_calls || parsedResponse.tool_calls.length === 0)) {
-          this.sendMessage({
-            type: "agent_response",
-            content: parsedResponse.thought,
-          });
-
+          streamState = "done";
+          // Stream message already sent with completion, just update conversation
           this.conversationHistory.push({
             role: "assistant",
             content: parsedResponse.thought,
@@ -287,31 +301,55 @@ If you run a command that starts a server (like \`npm run dev\`), the tool will 
 
       // If parsing failed entirely (no tags found), and we have raw text
       if (!parsedResponse.thought && !parsedResponse.tool_calls) {
-         // Fallback: If strict mode, we might want to warn. 
-         // But for robustness, if meaningful text exists, treat as response.
-         const textContent = parsedResponse.response || response || "I'm ready to help.";
+         const textContent = parsedResponse.response || finalContent || "";
+         let retryCount = 0;
+         
+         // Limit retries to prevent infinite loops
+         const retryKey = "xml_parse_retry_count";
+         const currentRetryCount = (this.conversationHistory[this.conversationHistory.length - 1] as any)?.[retryKey] || 0;
+         
+         if (currentRetryCount >= 2) {
+           // Max retries reached - show error and stop
+           streamState = "done";
+           this.sendMessage({
+             type: "error",
+             message: "Failed to parse response after multiple attempts. Please check the model output format.",
+           });
+           return;
+         }
          
          // If it looks like it TRIED to use tools but failed XML?
          if (textContent.includes("<tool_code>") || textContent.includes("<thought>")) {
-             console.warn("XML Parse Error or Incomplete Tags");
-             this.conversationHistory.push({
+             // Incomplete XML - ask model to retry with proper format
+             const retryMsg: ChatMessage = {
                  role: "user",
-                 content: "System: Invalid XML format. Please use <thought> and <tool_code> tags correctly."
-             });
+                 content: "System: Invalid XML format detected. You must use complete <thought> and <tool_code> tags. Please retry with proper XML format."
+             };
+             (retryMsg as any)[retryKey] = currentRetryCount + 1;
+             this.conversationHistory.push(retryMsg);
              await this.runAgentLoop();
              return;
          }
 
-         this.sendMessage({
-            type: "agent_response",
-            content: textContent,
-          });
+         // If there's raw text without XML tags, treat as violation of format rules
+         if (textContent.trim().length > 0) {
+             const retryMsg: ChatMessage = {
+                 role: "user",
+                 content: `System: You provided text without XML tags: "${textContent.substring(0, 100)}...". All responses must use <thought> tags for reasoning and <tool_code> tags for tool calls. Please retry with proper XML format.`
+             };
+             (retryMsg as any)[retryKey] = currentRetryCount + 1;
+             this.conversationHistory.push(retryMsg);
+             await this.runAgentLoop();
+             return;
+         }
 
-          this.conversationHistory.push({
-            role: "assistant",
-            content: textContent,
-          });
+         // Empty response - mark as done
+         streamState = "done";
+         return;
       }
+      
+      // Mark as done
+      streamState = "done";
 
     } catch (error: any) {
       console.error("Error in agent loop:", error);
@@ -329,60 +367,67 @@ If you run a command that starts a server (like \`npm run dev\`), the tool will 
     error?: string;
   } {
     try {
-      // XML Parsing Logic
+      // XML Parsing Logic with robust handling of incomplete tags
       let thought: string | undefined;
       const tool_calls: ToolCall[] = [];
 
-      // 1. Extract Thought
+      // 1. Extract Thought (handle both complete and incomplete tags)
       const thoughtMatch = response.match(/<thought>([\s\S]*?)<\/thought>/i);
       if (thoughtMatch) {
         thought = thoughtMatch[1].trim();
+      } else {
+        // Check for incomplete thought tag (opening without closing)
+        const incompleteThoughtMatch = response.match(/<thought>([\s\S]*?)$/i);
+        if (incompleteThoughtMatch) {
+          thought = incompleteThoughtMatch[1].trim();
+        }
+        // Check for incomplete thought tag (closing without opening - less common but handle it)
+        const closingThoughtMatch = response.match(/^([\s\S]*?)<\/thought>/i);
+        if (closingThoughtMatch && !thought) {
+          thought = closingThoughtMatch[1].trim();
+        }
       }
 
-      // 2. Extract Tool Calls
-      // Support multiple tool codes or single? Protocol implies one <tool_code> block containing one tool? 
-      // Or multiple <tool_code>? Let's assume one <tool_code> block per tool call or multiple.
-      // The prompt says: "ALL tool calls must be contained within <tool_code> tags."
-      // Example:
-      // <tool_code>
-      //   <tool_name>...</tool_name>
-      //   <parameters>...</parameters>
-      // </tool_code>
-      
+      // 2. Extract Tool Calls (handle both complete and incomplete tags)
+      // First, try to find complete <tool_code>...</tool_code> blocks
       const toolCodeRegex = /<tool_code>([\s\S]*?)<\/tool_code>/gi;
       let match;
       
       while ((match = toolCodeRegex.exec(response)) !== null) {
         const toolBlock = match[1];
-        
-        // Extract tool name
-        const nameMatch = toolBlock.match(/<tool_name>([\s\S]*?)<\/tool_name>/i);
-        if (nameMatch) {
-            const toolName = nameMatch[1].trim();
-            
-            // Extract parameters block
-            const paramsMatch = toolBlock.match(/<parameters>([\s\S]*?)<\/parameters>/i);
-            const args: any = {};
-            
-            if (paramsMatch) {
-                const paramsContent = paramsMatch[1];
-                // Regex to find all tags inside parameters
-                // Match <key>value</key>
-                // We use a regex that matches any tag name
-                const paramRegex = /<([^>]+)>([\s\S]*?)<\/\1>/gi;
-                let paramMatch;
-                
-                while ((paramMatch = paramRegex.exec(paramsContent)) !== null) {
-                    const key = paramMatch[1].trim();
-                    const value = paramMatch[2].trim();
-                    args[key] = value;
-                }
-            }
+        const parsed = this.parseToolBlock(toolBlock);
+        if (parsed) {
+          tool_calls.push(parsed);
+        }
+      }
 
-            tool_calls.push({
-                name: toolName,
-                arguments: args
-            });
+      // 3. Handle incomplete tool_code tags (opening without closing)
+      // Check if there's a <tool_code> that doesn't have a matching </tool_code>
+      const incompleteToolCodeMatch = response.match(/<tool_code>([\s\S]*?)$/i);
+      if (incompleteToolCodeMatch) {
+        // Check if we already parsed this in the complete regex above
+        const lastCompleteIndex = response.lastIndexOf('</tool_code>');
+        const lastOpeningIndex = response.lastIndexOf('<tool_code>');
+        
+        // If the last opening is after the last closing, we have an incomplete tag
+        if (lastOpeningIndex > lastCompleteIndex) {
+          const incompleteBlock = response.substring(lastOpeningIndex + '<tool_code>'.length);
+          const parsed = this.parseToolBlock(incompleteBlock);
+          if (parsed) {
+            tool_calls.push(parsed);
+          }
+        }
+      }
+
+      // 4. Handle incomplete tool_code tags (closing without opening - less common)
+      // Check if there's a </tool_code> that doesn't have a matching <tool_code>
+      const closingToolCodeMatch = response.match(/^([\s\S]*?)<\/tool_code>/i);
+      if (closingToolCodeMatch && tool_calls.length === 0) {
+        // Only process if we haven't found any complete tool calls
+        const incompleteBlock = closingToolCodeMatch[1];
+        const parsed = this.parseToolBlock(incompleteBlock);
+        if (parsed) {
+          tool_calls.push(parsed);
         }
       }
 
@@ -422,6 +467,44 @@ If you run a command that starts a server (like \`npm run dev\`), the tool will 
     }
   }
 
+  private parseToolBlock(toolBlock: string): ToolCall | null {
+    // Extract tool name (handle incomplete tags)
+    const nameMatch = toolBlock.match(/<tool_name>([\s\S]*?)(?:<\/tool_name>|$)/i);
+    if (!nameMatch) {
+      return null;
+    }
+    
+    const toolName = nameMatch[1].trim();
+    if (!toolName) {
+      return null;
+    }
+    
+    // Extract parameters block (handle incomplete tags)
+    const paramsMatch = toolBlock.match(/<parameters>([\s\S]*?)(?:<\/parameters>|$)/i);
+    const args: any = {};
+    
+    if (paramsMatch) {
+      const paramsContent = paramsMatch[1];
+      // Regex to find all tags inside parameters
+      // Match <key>value</key> or <key>value (if incomplete)
+      const paramRegex = /<([^>]+)>([\s\S]*?)(?:<\/\1>|$)/gi;
+      let paramMatch;
+      
+      while ((paramMatch = paramRegex.exec(paramsContent)) !== null) {
+        const key = paramMatch[1].trim();
+        const value = paramMatch[2].trim();
+        if (key && value !== undefined) {
+          args[key] = value;
+        }
+      }
+    }
+
+    return {
+      name: toolName,
+      arguments: args
+    };
+  }
+
   private async executeToolCalls(toolCalls: ToolCall[]): Promise<void> {
     for (const toolCall of toolCalls) {
       const tool = getToolByName(toolCall.name);
@@ -443,23 +526,21 @@ If you run a command that starts a server (like \`npm run dev\`), the tool will 
         continue;
       }
 
-      // Resolve paths relative to working directory for file operations
-      const resolvedArgs = { ...toolCall.arguments };
-      if (toolCall.name === "read_file" || toolCall.name === "write_file" || toolCall.name === "edit_file" || toolCall.name === "list_dir") {
-        if (resolvedArgs.path && !path.isAbsolute(resolvedArgs.path)) {
-          resolvedArgs.path = path.resolve(this.workingDirectory, resolvedArgs.path);
-        }
-      }
+      // Prepare context for tools
+      const toolContext = {
+        workingDirectory: this.workingDirectory,
+      };
 
       // Show status instead of full tool details (Silent Actor pattern)
+      // Note: Tool execution is now integrated into the stream flow
       this.sendMessage({
         type: "tool_call",
         tool: toolCall.name,
-        args: { status: `Running ${toolCall.name}...` }, // Don't show full args
+        args: { status: ` Running ${toolCall.name}...` }, // Don't show full args
       });
 
       if (tool.requiresApproval) {
-        const approved = await this.requestApproval(toolCall.name, resolvedArgs);
+        const approved = await this.requestApproval(toolCall.name, toolCall.arguments);
         
         if (!approved) {
           const result = { success: false, error: "User denied approval" };
@@ -479,7 +560,8 @@ If you run a command that starts a server (like \`npm run dev\`), the tool will 
       }
 
       try {
-        const result = await tool.execute(resolvedArgs);
+        // Pass context to tool execution
+        const result = await tool.execute(toolCall.arguments, toolContext);
         
         // Show minimal result (Silent Actor pattern)
         this.sendMessage({

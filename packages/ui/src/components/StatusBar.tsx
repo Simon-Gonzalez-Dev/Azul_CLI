@@ -49,14 +49,14 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   if (providerStatus) {
     const suffix = providerStatus.model ? ` (${providerStatus.model})` : "";
     if (providerStatus.mode === "api") {
-      modeLabel = `API • ${providerStatus.provider}${suffix}`;
+      modeLabel = `API - ${providerStatus.provider}${suffix}`;
       modeColor = providerStatus.fallback ? "yellowBright" : "yellow";
     } else {
-      modeLabel = `Local • ${providerStatus.provider}${suffix}`;
+      modeLabel = `Local - ${providerStatus.provider}${suffix}`;
       modeColor = "cyan";
     }
   } else {
-    modeLabel = mode === "api" ? "API • Remote Cascade" : `Local • ${modelName}`;
+    modeLabel = mode === "api" ? "API - Remote Cascade" : `Local - ${modelName}`;
   }
 
   return (
@@ -73,10 +73,10 @@ export const StatusBar: React.FC<StatusBarProps> = ({
           <Text color="cyanBright" bold>
             AZUL
           </Text>
-          <Text dimColor> · Autonomous Coding Partner</Text>
+          <Text dimColor> - Autonomous Coding Partner</Text>
         </Text>
         <Text color={connected ? "green" : "red"}>
-          {connected ? "● ONLINE" : "○ OFFLINE"}
+          {connected ? "[ONLINE]" : "[OFFLINE]"}
         </Text>
       </Box>
       <Box justifyContent="space-between" width="100%" marginTop={1}>
@@ -84,9 +84,9 @@ export const StatusBar: React.FC<StatusBarProps> = ({
           {modeLabel}
         </Text>
         <Text dimColor>
-          ctx {formattedPromptTokens} · in {formattedInputTokens} · out{" "}
-          {formattedOutputTokens} · Σ {formattedCumulative}
-          {tokensPerSec > 0 ? ` · ${tokensPerSec.toFixed(1)} tokens/s` : ""}
+          ctx {formattedPromptTokens} | in {formattedInputTokens} | out{" "}
+          {formattedOutputTokens} | total {formattedCumulative}
+          {tokensPerSec > 0 ? ` | ${tokensPerSec.toFixed(1)} tokens/s` : ""}
         </Text>
       </Box>
       {providerStatus?.fallback && providerStatus.reason && (

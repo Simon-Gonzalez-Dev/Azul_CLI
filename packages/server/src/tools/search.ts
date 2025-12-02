@@ -1,42 +1,208 @@
 import { exec } from "child_process";
 import { promisify } from "util";
+import * as path from "path";
 import { ToolDefinition } from "../types.js";
+import * as fs from "fs/promises";
 
 const execAsync = promisify(exec);
 
-export const searchFilesTool: ToolDefinition = {
-  name: "search_files",
-  description: "Search for a pattern in files (similar to grep)",
+// Smart path resolution
+function resolvePath(filePath: string, workingDirectory: string): string {
+  if (filePath.startsWith("~")) {
+    const homeDir = process.env.HOME || process.env.USERPROFILE || "";
+    if (homeDir) {
+      filePath = path.join(homeDir, filePath.slice(1));
+    }
+  }
+  
+  if (!path.isAbsolute(filePath)) {
+    return path.resolve(workingDirectory, filePath);
+  }
+  
+  return path.normalize(filePath);
+}
+
+// Enhanced grep tool with better options
+export const grepTool: ToolDefinition = {
+  name: "grep",
+  description: "Search for text patterns in files using grep. Supports regex patterns, case-insensitive search, and file filtering. More powerful than search_files.",
   parameters: {
     type: "object",
     properties: {
       pattern: {
         type: "string",
-        description: "The pattern to search for",
+        description: "The text pattern or regex to search for. Use regex syntax for advanced matching.",
       },
       path: {
         type: "string",
-        description: "The path to search in (optional, defaults to current directory)",
+        description: "The directory or file path to search in (defaults to current directory). Supports relative and absolute paths.",
+      },
+      caseSensitive: {
+        type: "boolean",
+        description: "Whether the search should be case-sensitive (default: true)",
+      },
+      filePattern: {
+        type: "string",
+        description: "Optional file pattern filter (e.g., '*.ts', '*.{ts,tsx}'). Only search in matching files.",
+      },
+      maxResults: {
+        type: "number",
+        description: "Maximum number of results to return (default: 100)",
       },
     },
     required: ["pattern"],
   },
   requiresApproval: false,
-  async execute(args: { pattern: string; path?: string }) {
+  async execute(args: {
+    pattern: string;
+    path?: string;
+    caseSensitive?: boolean;
+    filePattern?: string;
+    maxResults?: number;
+  }, context?: { workingDirectory?: string }) {
     try {
-      const searchPath = args.path || ".";
-      // Use grep -r for recursive search, -n for line numbers, -I to skip binary files
-      const command = `grep -rn -I "${args.pattern}" "${searchPath}" 2>/dev/null || true`;
-      const { stdout } = await execAsync(command);
+      const workingDir = context?.workingDirectory || process.cwd();
+      const searchPath = args.path ? resolvePath(args.path, workingDir) : workingDir;
+      const caseSensitive = args.caseSensitive !== false; // Default to true
+      const maxResults = args.maxResults || 100;
+      
+      // Check if path exists
+      try {
+        const stats = await fs.stat(searchPath);
+        if (!stats.isDirectory() && !stats.isFile()) {
+          return {
+            success: false,
+            error: `Path is not a file or directory: ${searchPath}`,
+          };
+        }
+      } catch {
+        return {
+          success: false,
+          error: `Path not found: ${searchPath}`,
+        };
+      }
+      
+      // Build grep command with smart options
+      let command = "grep";
+      
+      // Add flags
+      const flags: string[] = [];
+      flags.push("-rn"); // recursive, line numbers
+      flags.push("-I"); // skip binary files
+      
+      if (!caseSensitive) {
+        flags.push("-i");
+      }
+      
+      // Add file pattern filter if specified
+      if (args.filePattern) {
+        flags.push(`--include=${args.filePattern}`);
+      } else {
+        // Default: exclude common binary and build artifacts
+        flags.push("--exclude-dir=node_modules");
+        flags.push("--exclude-dir=.git");
+        flags.push("--exclude-dir=dist");
+        flags.push("--exclude-dir=build");
+        flags.push("--exclude=*.min.js");
+        flags.push("--exclude=*.min.css");
+      }
+      
+      // Escape pattern for shell (handle special characters)
+      const escapedPattern = args.pattern.replace(/"/g, '\\"');
+      const escapedPath = searchPath.replace(/"/g, '\\"');
+      
+      command = `grep ${flags.join(" ")} "${escapedPattern}" "${escapedPath}" 2>/dev/null || true`;
+      
+      const { stdout } = await execAsync(command, {
+        maxBuffer: 10 * 1024 * 1024, // 10MB buffer for large results
+      });
       
       const lines = stdout.trim().split("\n").filter(line => line.length > 0);
-      const results = lines.slice(0, 50); // Limit to first 50 results
+      const results = lines.slice(0, maxResults);
+      const truncated = lines.length > maxResults;
+      
+      // Parse results into structured format
+      const parsedResults = results.map(line => {
+        // Format: path:line:content
+        const match = line.match(/^(.+?):(\d+):(.+)$/);
+        if (match) {
+          return {
+            file: match[1],
+            line: parseInt(match[2], 10),
+            content: match[3],
+            fullLine: line,
+          };
+        }
+        return {
+          file: searchPath,
+          line: 0,
+          content: line,
+          fullLine: line,
+        };
+      });
       
       return {
         success: true,
-        results,
+        results: parsedResults,
+        rawResults: results,
         count: results.length,
-        truncated: lines.length > 50,
+        totalMatches: lines.length,
+        truncated,
+        pattern: args.pattern,
+        searchPath,
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message,
+        pattern: args.pattern,
+      };
+    }
+  },
+};
+
+// Simple search tool (backwards compatible)
+export const searchFilesTool: ToolDefinition = {
+  name: "search_files",
+  description: "Simple text search in files (similar to grep but simpler). For advanced search, use grep tool instead.",
+  parameters: {
+    type: "object",
+    properties: {
+      pattern: {
+        type: "string",
+        description: "The text pattern to search for",
+      },
+      directory: {
+        type: "string",
+        description: "The directory path to search in (optional, defaults to current directory)",
+      },
+    },
+    required: ["pattern"],
+  },
+  requiresApproval: false,
+  async execute(args: { pattern: string; directory?: string }, context?: { workingDirectory?: string }) {
+    try {
+      const workingDir = context?.workingDirectory || process.cwd();
+      const searchPath = args.directory ? resolvePath(args.directory, workingDir) : workingDir;
+      
+      // Use grep tool internally for consistency
+      const grepResult = await grepTool.execute({
+        pattern: args.pattern,
+        path: searchPath,
+        caseSensitive: false,
+        maxResults: 50,
+      }, context);
+      
+      if (!grepResult.success) {
+        return grepResult;
+      }
+      
+      // Convert to old format for backwards compatibility
+      return {
+        success: true,
+        results: grepResult.rawResults || [],
+        count: grepResult.count || 0,
+        truncated: grepResult.truncated || false,
       };
     } catch (error: any) {
       return {
@@ -46,4 +212,3 @@ export const searchFilesTool: ToolDefinition = {
     }
   },
 };
-

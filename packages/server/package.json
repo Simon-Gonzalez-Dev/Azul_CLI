@@ -12,7 +12,6 @@
     "dev": "tsc && node dist/main.js"
   },
   "dependencies": {
-    "chalk": "^4.1.2",
     "dotenv": "^17.2.3",
     "ink": "^4.4.1",
     "node-llama-cpp": "^3.0.0",

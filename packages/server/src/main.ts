@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+// Clear terminal immediately on start - ensures clean slate
+console.clear();
+
 import * as path from "path";
 import * as fs from "fs/promises";
 import { fileURLToPath } from "url";
@@ -22,57 +25,19 @@ const packageRoot = path.resolve(__dirname, "../../..");
 const packageEnvPath = path.join(packageRoot, ".env");
 const cwdEnvPath = path.join(process.cwd(), ".env");
 
-// Store .env loading messages
-const envLoadMessages: string[] = [];
-
+// Load environment variables silently - no console output
 // Try package root .env first (for global installs)
-let packageEnvLoaded = false;
 try {
-  const packageEnv = dotenv.config({ path: packageEnvPath });
-  if (!packageEnv.error) {
-    packageEnvLoaded = true;
-    const msg = `Loaded .env from package root: ${packageEnvPath}`;
-    console.log(`   ${msg}`);
-    envLoadMessages.push(msg);
-  } else {
-    const errorCode = (packageEnv.error as any).code;
-    if (errorCode && errorCode !== 'ENOENT') {
-      const msg = `Warning: Error loading .env from package root: ${packageEnv.error.message}`;
-      console.warn(`   ${msg}`);
-      envLoadMessages.push(msg);
-    }
-  }
-} catch (error: any) {
+  dotenv.config({ path: packageEnvPath });
+} catch {
   // Ignore if file doesn't exist
 }
 
 // Also try current directory .env (allows project-specific overrides)
-// Use override: true so current directory .env takes precedence
-let cwdEnvLoaded = false;
 try {
-  const cwdEnv = dotenv.config({ path: cwdEnvPath, override: true });
-  if (!cwdEnv.error) {
-    cwdEnvLoaded = true;
-    const msg = `Loaded .env from current directory: ${cwdEnvPath}`;
-    console.log(`   ${msg}`);
-    envLoadMessages.push(msg);
-  } else {
-    const errorCode = (cwdEnv.error as any).code;
-    if (errorCode && errorCode !== 'ENOENT') {
-      const msg = `Warning: Error loading .env from current directory: ${cwdEnv.error.message}`;
-      console.warn(`   ${msg}`);
-      envLoadMessages.push(msg);
-    }
-  }
-} catch (error: any) {
+  dotenv.config({ path: cwdEnvPath, override: true });
+} catch {
   // Ignore if file doesn't exist
-}
-
-// Debug: Show which .env files were loaded
-if (!packageEnvLoaded && !cwdEnvLoaded) {
-  const msg = `No .env file found (checked: ${packageEnvPath}, ${cwdEnvPath})`;
-  console.log(`   ${msg}`);
-  envLoadMessages.push(msg);
 }
 
 
@@ -123,7 +88,7 @@ async function loadConfig(): Promise<{ config: Config; configPath: string }> {
     return { config, configPath: packageRoot };
   } catch (error) {
     // Config not found, use defaults
-    console.error(`Failed to load config.json from ${packageConfigPath}, using defaults`);
+    // Failed to load config - using defaults (silent)
   }
   
   // Use package root as configPath for defaults
@@ -138,9 +103,8 @@ async function loadConfig(): Promise<{ config: Config; configPath: string }> {
 }
 
 async function main() {
-  console.clear();
-  console.log(BANNER);
-  console.log("Starting Azul...");
+  // Terminal already cleared at module level
+  // UI will handle banner display
 
   const queuedMessages: any[] = [];
   let uiReady = false;
@@ -167,24 +131,9 @@ async function main() {
     }
   };
 
-  // Add .env loading messages to init messages (loaded at module level)
-  if (envLoadMessages.length > 0) {
-    enqueueMessage({
-      type: "system",
-      message: envLoadMessages.join("\n"),
-    });
-  }
-
   // Load configuration
   const { config, configPath } = await loadConfig();
-  const configMsg = `Configuration loaded\nModel: ${config.modelPath}\nContext Size: ${config.contextSize}`;
-  console.log(`   Configuration loaded`);
-  console.log(`   Model: ${config.modelPath}`);
-  console.log(`   Context Size: ${config.contextSize}`);
-  enqueueMessage({
-    type: "system",
-    message: configMsg,
-  });
+  // Configuration loaded - no console output (UI will show if needed)
 
   // Resolve model path relative to config file location, not current working directory
   let modelPath: string;
@@ -253,13 +202,8 @@ async function main() {
   // Initialize Local by default
   try {
     await localOrchestrator.initialize();
-    console.log("   Local LLM initialized\n");
-    enqueueMessage({
-      type: "system",
-      message: "Local LLM initialized",
-    });
+    // Local LLM initialized - status shown in UI
   } catch (error) {
-    console.error(" Failed to initialize local LLM:", error);
     enqueueMessage({
       type: "error",
       message: `Failed to initialize local LLM: ${error}`,
@@ -267,20 +211,13 @@ async function main() {
   }
 
   // Pre-initialize API if keys exist (optional, but good for fast switching)
-  // Just check if keys exist to show status
   const apiKeysExist = providerConfig.hfApiKey || providerConfig.geminiApiKey || providerConfig.groqApiKey || providerConfig.openRouterApiKey;
   if (apiKeysExist) {
     try {
         await apiOrchestrator.initialize();
-        const msg = "API Providers initialized (HF, Gemini, Groq, OpenRouter)";
-        console.log(`   ${msg}\n`);
-        enqueueMessage({
-          type: "system",
-          message: msg,
-        });
+        // API Providers initialized - status shown in UI
     } catch (e) {
-        // ignore initialization errors for API until switched
-         console.log(`   API initialization warning: ${e}\n`);
+        // Ignore initialization errors for API until switched
     }
   }
 
@@ -429,7 +366,8 @@ async function main() {
       onMessage: (handler: (message: any) => void) => {
         messageHandlers.onMessage = handler;
         uiReady = true;
-        queuedMessages.forEach((msg) => handler(msg));
+        // Don't send queued messages - start fresh with clean UI
+        // Only banner will be shown
         queuedMessages.length = 0;
       },
       onReset: handleReset,
@@ -442,10 +380,8 @@ async function main() {
 
   // Graceful shutdown
   const shutdown = async () => {
-    console.log("\n\n Shutting down...");
     await localOrchestrator.cleanup();
     await apiOrchestrator.cleanup();
-    console.log(" Goodbye!");
     process.exit(0);
   };
 
@@ -454,6 +390,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error("Fatal error:", error);
+  // Fatal error - exit silently (error already shown in UI if possible)
   process.exit(1);
 });

@@ -80,27 +80,28 @@ export abstract class BaseLLMProvider implements ILLMService {
   }
 
   protected formatConversationAsPlaintext(messages: ChatMessage[]): string {
-    let output = "";
+    // Optimized: Use array join instead of string concatenation
+    const parts: string[] = [];
 
     for (const msg of messages) {
       if (msg.role === "system") {
-        output += `${msg.content ?? ""}\n\n`;
+        parts.push(`${msg.content ?? ""}\n`);
       } else if (msg.role === "user") {
-        output += `User: ${msg.content ?? ""}\n\n`;
+        parts.push(`User: ${msg.content ?? ""}\n`);
       } else if (msg.role === "assistant") {
         if (msg.tool_calls && msg.tool_calls.length > 0) {
-          output += `Assistant: ${msg.content ?? "I'll use tools to help."}\n`;
-          output += `${this.formatToolCallsAsXml(msg.tool_calls)}\n\n`;
+          parts.push(`Assistant: ${msg.content ?? "I'll use tools to help."}\n`);
+          parts.push(`${this.formatToolCallsAsXml(msg.tool_calls)}\n`);
         } else {
-          output += `Assistant: ${msg.content ?? ""}\n\n`;
+          parts.push(`Assistant: ${msg.content ?? ""}\n`);
         }
       } else if (msg.role === "tool") {
-        output += `${this.formatToolResult(msg.content, msg.tool_call_id)}\n\n`;
+        parts.push(`${this.formatToolResult(msg.content, msg.tool_call_id)}\n`);
       }
     }
 
-    output += "Assistant:";
-    return output;
+    parts.push("Assistant:");
+    return parts.join("\n");
   }
 
   protected estimateTokensFromText(text: string): number {
@@ -121,38 +122,52 @@ export abstract class BaseLLMProvider implements ILLMService {
     let fullSystemPrompt = systemPrompt;
 
     if (tools && tools.length > 0) {
-      fullSystemPrompt += "\n\nYou have access to the following tools:\n\n";
+      fullSystemPrompt += "\n\n# AVAILABLE TOOLS\n\n";
+      fullSystemPrompt += "You have access to the following tools. Use them via <tool_code> XML blocks.\n\n";
       tools.forEach(tool => {
-        fullSystemPrompt += `### ${tool.name}\n`;
-        fullSystemPrompt += `Description: ${tool.description}\n`;
-        fullSystemPrompt += `Parameters: ${JSON.stringify(tool.parameters, null, 2)}\n\n`;
+        fullSystemPrompt += `## Tool: ${tool.name}\n`;
+        fullSystemPrompt += `**Description:** ${tool.description}\n`;
+        fullSystemPrompt += `**Parameters:**\n${JSON.stringify(tool.parameters, null, 2)}\n\n`;
       });
 
-      // Standardized XML tool call format for ALL providers
-      fullSystemPrompt += `\nTo use a tool, you MUST use the following XML format.
-ALL of your reasoning must be contained within <thought> tags.
-ALL tool calls must be contained within <tool_code> tags.
+      // Standardized XML tool call format for ALL providers - STRICT ENFORCEMENT
+      fullSystemPrompt += `\n\n# RESPONSE FORMAT ENFORCEMENT
 
-Format:
+## Mandatory XML Structure
+
+You MUST use ONLY XML tags for all responses. Text outside these tags will be IGNORED by the system.
+
+### Required Format:
+
 <thought>
-Explain your reasoning here...
+Your reasoning, planning, and any user communication goes here.
 </thought>
+
 <tool_code>
 <tool_name>tool_name</tool_name>
 <parameters>
 <param_name>param_value</param_name>
 <another_param>
 multi-line
-value
+value content
 </another_param>
 </parameters>
 </tool_code>
 
-IMPORTANT:
-- You MUST use valid XML tags.
-- Do NOT use markdown code blocks for the XML.
-- Text outside <thought> or <tool_code> tags will be ignored.
-- For tool parameters that contain code, just put the code directly inside the tag. No need to escape quotes.
+### Absolute Rules:
+
+1. **ALL text must be inside <thought> or <tool_code> tags** - NO EXCEPTIONS
+2. **NO markdown code blocks** - Do not wrap XML in markdown code fences
+3. **NO code examples in chat** - Use tools to make changes, don't show code
+4. **DO actions, don't describe them** - Execute tools instead of explaining how
+5. **Multiple tool calls** - Use separate <tool_code> blocks for each call
+6. **Parameter values** - Put code directly in parameter tags (no escaping needed)
+
+### Violation Consequences:
+
+Responses that violate these rules will be REJECTED and you will be asked to retry with proper XML format.
+
+---
 `;
     }
 
@@ -188,7 +203,6 @@ IMPORTANT:
       return { response: result.response, toolCalls: undefined, stats };
 
     } catch (error) {
-      console.error("Provider generation error:", error);
       throw error;
     }
   }

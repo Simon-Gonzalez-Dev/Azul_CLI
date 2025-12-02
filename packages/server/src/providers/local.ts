@@ -27,14 +27,13 @@ export class LocalProvider extends BaseLLMProvider {
   }
 
   async initialize(): Promise<void> {
-    console.log(`  Local Provider loading model: ${this.modelPath}`);
+    // Load model silently - UI will show status
     const llama = await getLlama();
     this.model = await llama.loadModel({ modelPath: this.modelPath });
     this.context = await this.model.createContext({ contextSize: this.contextSize });
     this.session = new LlamaChatSession({
       contextSequence: this.context.getSequence(),
     });
-    console.log("  Local Provider ready.");
   }
 
   async cleanup(): Promise<void> {
@@ -74,12 +73,21 @@ export class LocalProvider extends BaseLLMProvider {
           return;
         }
         streamedText += chunk;
+        // Always call onToken callback immediately for smooth streaming
+        // No throttling - let the UI handle rendering performance
         if (onToken) {
           onToken(streamedText);
         }
       },
       onToken: (tokens: Token[]) => {
         streamedOutputTokens += tokens.length;
+        // Safety net: If onTextChunk didn't fire for some reason, ensure streaming
+        // This handles edge cases where text chunks might be delayed
+        if (onToken && tokens.length > 0 && streamedText) {
+          // Only call if we have accumulated text and onTextChunk might have missed it
+          // This ensures every token triggers streaming callback
+          onToken(streamedText);
+        }
       },
     });
 

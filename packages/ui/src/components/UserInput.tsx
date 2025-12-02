@@ -129,7 +129,7 @@ export const UserInput: React.FC<UserInputProps> = ({ onSubmit, disabled = false
           {">"}{" "}
         </Text>
         <Text>{input}</Text>
-        <Text color="gray">█</Text>
+        <Text color="gray">|</Text>
       </Box>
     </Box>
   );

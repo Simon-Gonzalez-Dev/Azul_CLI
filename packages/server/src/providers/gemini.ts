@@ -25,7 +25,7 @@ export class GeminiProvider extends BaseLLMProvider {
   }
 
   async initialize(): Promise<void> {
-    console.log(`  Gemini Provider ready (model: ${this.model})`);
+    // Provider ready - no console output needed (UI shows status)
   }
 
   async cleanup(): Promise<void> {
@@ -153,7 +153,6 @@ export class GeminiProvider extends BaseLLMProvider {
         outputTokens,
       };
     } catch (error) {
-      console.error("Gemini generation error:", error);
       throw error;
     }
   }

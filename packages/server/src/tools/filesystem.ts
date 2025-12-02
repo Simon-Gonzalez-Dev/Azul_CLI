@@ -2,25 +2,66 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { ToolDefinition } from "../types.js";
 
-// Extract code from markdown code blocks
+// Smart path resolution - handles relative paths, ~ expansion, and normalization
+function resolvePath(filePath: string, workingDirectory: string): string {
+  // Handle home directory expansion
+  if (filePath.startsWith("~")) {
+    const homeDir = process.env.HOME || process.env.USERPROFILE || "";
+    if (homeDir) {
+      filePath = path.join(homeDir, filePath.slice(1));
+    }
+  }
+  
+  // Resolve relative paths against working directory
+  if (!path.isAbsolute(filePath)) {
+    return path.resolve(workingDirectory, filePath);
+  }
+  
+  return path.normalize(filePath);
+}
+
+// Smart whitespace normalization - preserves intent while handling common issues
+function normalizeWhitespace(content: string, preserveIndentation: boolean = true): string {
+  // Normalize line endings to \n
+  let normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  
+  // Remove trailing whitespace from lines (but preserve leading indentation)
+  if (preserveIndentation) {
+    normalized = normalized.split('\n').map(line => {
+      // Preserve leading whitespace (indentation) but remove trailing
+      return line.replace(/[ \t]+$/, '');
+    }).join('\n');
+  }
+  
+  // Ensure file ends with single newline (if it had content)
+  if (normalized.length > 0 && !normalized.endsWith('\n')) {
+    normalized += '\n';
+  }
+  
+  return normalized;
+}
+
+// Extract code from markdown code blocks (smart extraction)
 function extractCodeFromMarkdown(content: string): string {
-  // Check if content is wrapped in markdown code blocks
+  // Check for complete code block with language identifier
   const codeBlockRegex = /^```[\w]*\n([\s\S]*?)\n```$/;
   const match = content.match(codeBlockRegex);
   if (match) {
     return match[1];
   }
-  // Check for inline code blocks
+  
+  // Check for inline code blocks (multiple)
   const inlineCodeRegex = /```[\w]*\n([\s\S]*?)\n```/g;
-  const inlineMatch = content.match(inlineCodeRegex);
-  if (inlineMatch && inlineMatch.length === 1) {
-    return inlineMatch[0].replace(/```[\w]*\n/, '').replace(/\n```$/, '');
+  const matches = [...content.matchAll(inlineCodeRegex)];
+  if (matches.length === 1) {
+    return matches[0][1];
   }
+  
   // No code blocks found, return as-is
   return content;
 }
 
-// Simple diff utility to show changes (optimized for readability)
+// Smart diff utility with better context and formatting
 export function computeDiff(oldContent: string, newContent: string): {
   added: number;
   removed: number;
@@ -32,48 +73,38 @@ export function computeDiff(oldContent: string, newContent: string): {
   let added = 0;
   let removed = 0;
   const diffLines: string[] = [];
-  const contextLines = 3; // Show 3 lines of context around changes
+  const contextLines = 3;
   let lastChangeIndex = -contextLines - 1;
   
-  // Simple line-by-line comparison with context
   const maxLen = Math.max(oldLines.length, newLines.length);
   for (let i = 0; i < maxLen; i++) {
     const oldLine = oldLines[i];
     const newLine = newLines[i];
     const isChanged = oldLine !== newLine;
     const isUnchanged = oldLine === newLine && oldLine !== undefined;
-    
-    // Show context around changes
     const shouldShowContext = isUnchanged && (i - lastChangeIndex <= contextLines);
     
     if (oldLine === undefined) {
-      // New line added
       diffLines.push(`+ ${newLine}`);
       added++;
       lastChangeIndex = i;
     } else if (newLine === undefined) {
-      // Line removed
       diffLines.push(`- ${oldLine}`);
       removed++;
       lastChangeIndex = i;
     } else if (isChanged) {
-      // Line changed
       diffLines.push(`- ${oldLine}`);
       diffLines.push(`+ ${newLine}`);
       removed++;
       added++;
       lastChangeIndex = i;
     } else if (shouldShowContext) {
-      // Show context around changes
       diffLines.push(`  ${oldLine}`);
     } else if (i === 0 || i === maxLen - 1) {
-      // Always show first and last line
       diffLines.push(`  ${oldLine}`);
     }
-    // Skip unchanged lines that are far from changes
   }
   
-  // Limit diff size for very large files
   const maxDiffLines = 200;
   if (diffLines.length > maxDiffLines) {
     diffLines.splice(maxDiffLines);
@@ -87,81 +118,163 @@ export function computeDiff(oldContent: string, newContent: string): {
   };
 }
 
+// Smart search block finder with fuzzy matching hints
+function findSearchBlock(content: string, search: string): {
+  found: boolean;
+  exactMatch: boolean;
+  suggestions?: string[];
+} {
+  const normalizedContent = normalizeWhitespace(content, true);
+  const normalizedSearch = normalizeWhitespace(search, true);
+  
+  // Exact match
+  if (normalizedContent.includes(normalizedSearch)) {
+    return { found: true, exactMatch: true };
+  }
+  
+  // Try without trailing whitespace
+  const searchTrimmed = normalizedSearch.trim();
+  if (normalizedContent.includes(searchTrimmed)) {
+    return { found: true, exactMatch: false };
+  }
+  
+  // Generate suggestions for similar blocks
+  const suggestions: string[] = [];
+  const searchLines = normalizedSearch.split('\n');
+  if (searchLines.length > 0) {
+    const firstLine = searchLines[0].trim();
+    const contentLines = normalizedContent.split('\n');
+    
+    // Find lines containing the first line
+    for (let i = 0; i < contentLines.length; i++) {
+      if (contentLines[i].includes(firstLine)) {
+        // Try to extract a similar block
+        const start = Math.max(0, i - 2);
+        const end = Math.min(contentLines.length, i + searchLines.length + 2);
+        const candidate = contentLines.slice(start, end).join('\n');
+        if (candidate.length > 0 && candidate.length < 500) {
+          suggestions.push(candidate);
+          if (suggestions.length >= 3) break;
+        }
+      }
+    }
+  }
+  
+  return { found: false, exactMatch: false, suggestions };
+}
+
 export const readFileTool: ToolDefinition = {
   name: "read_file",
-  description: "Read the contents of a file from the filesystem",
+  description: "Read the contents of a file from the filesystem. Returns the full file content.",
   parameters: {
     type: "object",
     properties: {
       path: {
         type: "string",
-        description: "The path to the file to read",
+        description: "The path to the file to read (supports relative paths, absolute paths, and ~ expansion)",
       },
     },
     required: ["path"],
   },
   requiresApproval: false,
-  async execute(args: { path: string }) {
+  async execute(args: { path: string }, context?: { workingDirectory?: string }) {
     try {
-      const content = await fs.readFile(args.path, "utf-8");
-      return { success: true, content };
+      const workingDir = context?.workingDirectory || process.cwd();
+      const resolvedPath = resolvePath(args.path, workingDir);
+      
+      // Check if file exists first
+      try {
+        await fs.access(resolvedPath);
+      } catch {
+        return {
+          success: false,
+          error: `File not found: ${resolvedPath}`,
+          suggestion: "Use list_dir to check the directory structure.",
+        };
+      }
+      
+      const content = await fs.readFile(resolvedPath, "utf-8");
+      return {
+        success: true,
+        content,
+        path: resolvedPath,
+        size: content.length,
+        lines: content.split('\n').length,
+      };
     } catch (error: any) {
-      return { success: false, error: error.message };
+      return {
+        success: false,
+        error: error.message,
+        path: args.path,
+      };
     }
   },
 };
 
 export const writeFileTool: ToolDefinition = {
   name: "write_file",
-  description: "Write or create a file with the given content. If the file exists, it will be updated and a diff will be shown. Use this tool whenever the user asks you to create, update, or modify a file. Extract the actual code content from any markdown code blocks if present.",
+  description: "Create a new file or completely overwrite an existing file. Use this only for new files or very small files (<50 lines). For existing files, prefer edit_file.",
   parameters: {
     type: "object",
     properties: {
       path: {
         type: "string",
-        description: "The path to the file to write (e.g., 'calc.py', './src/main.ts', 'app.js')",
+        description: "The path to the file to write (supports relative paths, absolute paths, and ~ expansion)",
       },
       content: {
         type: "string",
-        description: "The complete content to write to the file. If the content is in a markdown code block, extract just the code without the markdown formatting.",
+        description: "The complete content to write to the file. Markdown code blocks will be automatically extracted.",
       },
     },
     required: ["path", "content"],
   },
   requiresApproval: true,
-  async execute(args: { path: string; content: string }) {
+  async execute(args: { path: string; content: string }, context?: { workingDirectory?: string }) {
     try {
+      const workingDir = context?.workingDirectory || process.cwd();
+      const resolvedPath = resolvePath(args.path, workingDir);
+      
       // Extract code from markdown if present
       const cleanContent = extractCodeFromMarkdown(args.content);
+      
+      // Normalize whitespace
+      const normalizedContent = normalizeWhitespace(cleanContent, true);
       
       // Check if file exists to compute diff
       let oldContent = "";
       let fileExists = false;
       try {
-        oldContent = await fs.readFile(args.path, "utf-8");
+        oldContent = await fs.readFile(resolvedPath, "utf-8");
         fileExists = true;
       } catch {
-        // File doesn't exist, will be created
         fileExists = false;
       }
       
       // Ensure the directory exists
-      const dir = path.dirname(args.path);
-      await fs.mkdir(dir, { recursive: true });
+      const dir = path.dirname(resolvedPath);
+      try {
+        await fs.mkdir(dir, { recursive: true });
+      } catch (error: any) {
+        return {
+          success: false,
+          error: `Failed to create directory: ${error.message}`,
+        };
+      }
       
-      // Write the file with cleaned content
-      await fs.writeFile(args.path, cleanContent, "utf-8");
+      // Write the file
+      await fs.writeFile(resolvedPath, normalizedContent, "utf-8");
       
       const result: any = {
         success: true,
-        message: fileExists ? `File updated: ${args.path}` : `File created: ${args.path}`,
-        filePath: args.path,
+        message: fileExists ? `File updated: ${resolvedPath}` : `File created: ${resolvedPath}`,
+        filePath: resolvedPath,
         fileExists,
+        lines: normalizedContent.split('\n').length,
       };
       
       // If file existed, compute and include diff
       if (fileExists) {
-        const diff = computeDiff(oldContent, cleanContent);
+        const diff = computeDiff(oldContent, normalizedContent);
         result.diff = diff.diff;
         result.added = diff.added;
         result.removed = diff.removed;
@@ -170,96 +283,184 @@ export const writeFileTool: ToolDefinition = {
       
       return result;
     } catch (error: any) {
-      return { success: false, error: error.message };
+      return {
+        success: false,
+        error: error.message,
+        path: args.path,
+      };
     }
   },
 };
 
 export const listDirTool: ToolDefinition = {
   name: "list_dir",
-  description: "List the contents of a directory",
+  description: "List the contents of a directory. Returns files and subdirectories with their types.",
   parameters: {
     type: "object",
     properties: {
       path: {
         type: "string",
-        description: "The path to the directory to list",
+        description: "The path to the directory to list (supports relative paths, absolute paths, and ~ expansion). Use '.' for current directory.",
       },
     },
     required: ["path"],
   },
   requiresApproval: false,
-  async execute(args: { path: string }) {
+  async execute(args: { path: string }, context?: { workingDirectory?: string }) {
     try {
-      const entries = await fs.readdir(args.path, { withFileTypes: true });
-      const items = entries.map((entry) => ({
-        name: entry.name,
-        isDirectory: entry.isDirectory(),
-        isFile: entry.isFile(),
-      }));
-      return { success: true, items };
+      const workingDir = context?.workingDirectory || process.cwd();
+      const resolvedPath = resolvePath(args.path, workingDir);
+      
+      // Check if path exists and is a directory
+      try {
+        const stats = await fs.stat(resolvedPath);
+        if (!stats.isDirectory()) {
+          return {
+            success: false,
+            error: `Path is not a directory: ${resolvedPath}`,
+            suggestion: "Use read_file to read files.",
+          };
+        }
+      } catch {
+        return {
+          success: false,
+          error: `Directory not found: ${resolvedPath}`,
+          suggestion: "Check the path or use list_dir on a parent directory.",
+        };
+      }
+      
+      const entries = await fs.readdir(resolvedPath, { withFileTypes: true });
+      const items = entries
+        .map((entry) => ({
+          name: entry.name,
+          isDirectory: entry.isDirectory(),
+          isFile: entry.isFile(),
+          path: path.join(resolvedPath, entry.name),
+        }))
+        .sort((a, b) => {
+          // Directories first, then alphabetically
+          if (a.isDirectory && !b.isDirectory) return -1;
+          if (!a.isDirectory && b.isDirectory) return 1;
+          return a.name.localeCompare(b.name);
+        });
+      
+      return {
+        success: true,
+        items,
+        path: resolvedPath,
+        count: items.length,
+        directories: items.filter(i => i.isDirectory).length,
+        files: items.filter(i => i.isFile).length,
+      };
     } catch (error: any) {
-      return { success: false, error: error.message };
+      return {
+        success: false,
+        error: error.message,
+        path: args.path,
+      };
     }
   },
 };
 
 export const editFileTool: ToolDefinition = {
   name: "edit_file",
-  description: "Replace a unique block of text with a new block. Use this for surgical file edits instead of rewriting entire files. This is more efficient and safer than write_file.",
+  description: "Surgically edit a file by replacing a unique code block. This is the preferred method for editing existing files. The search block must match exactly including whitespace. Use read_file first to get the exact formatting.",
   parameters: {
     type: "object",
     properties: {
       path: {
         type: "string",
-        description: "The path to the file to edit",
+        description: "The path to the file to edit (supports relative paths, absolute paths, and ~ expansion)",
       },
       search: {
         type: "string",
-        description: "The exact unique code block to locate (must match exactly including whitespace)",
+        description: "The exact unique code block to locate. Must match file content EXACTLY including whitespace, indentation, and line endings. Copy this directly from read_file output.",
       },
       replace: {
         type: "string",
-        description: "The new code block to insert in place of the search block",
+        description: "The new code block to insert in place of the search block. Will be normalized for whitespace.",
       },
     },
     required: ["path", "search", "replace"],
   },
   requiresApproval: true,
-  async execute(args: { path: string; search: string; replace: string }) {
+  async execute(args: { path: string; search: string; replace: string }, context?: { workingDirectory?: string }) {
     try {
-      const content = await fs.readFile(args.path, 'utf-8');
-
-      // Normalizing line endings is crucial for AI matching
-      const normalizedContent = content.replace(/\r\n/g, '\n');
-      const normalizedSearch = args.search.replace(/\r\n/g, '\n');
-
-      if (normalizedContent.includes(normalizedSearch)) {
-        // Perform replacement
-        const newContent = normalizedContent.replace(normalizedSearch, args.replace);
-        await fs.writeFile(args.path, newContent, 'utf-8');
-        
-        // Compute diff for display
-        const diff = computeDiff(normalizedSearch, args.replace);
-        
-        return { 
-          success: true, 
-          message: "Patch applied successfully.",
-          filePath: args.path,
-          diff: diff.diff,
-          added: diff.added,
-          removed: diff.removed,
-        };
-      } else {
-        // Smart Failure: Help the AI fix its mistake
-        return { 
-          success: false, 
-          error: "Search block not found. Ensure whitespace matches exactly or use `read_file` to verify context.",
-          suggestion: "Read the file first to see the exact formatting and whitespace."
+      const workingDir = context?.workingDirectory || process.cwd();
+      const resolvedPath = resolvePath(args.path, workingDir);
+      
+      // Read file content
+      let content: string;
+      try {
+        content = await fs.readFile(resolvedPath, 'utf-8');
+      } catch (error: any) {
+        return {
+          success: false,
+          error: `File not found: ${resolvedPath}`,
+          suggestion: "Use read_file to verify the file exists, or write_file to create it.",
         };
       }
+      
+      // Normalize whitespace for matching (preserve structure)
+      const normalizedContent = normalizeWhitespace(content, true);
+      const normalizedSearch = normalizeWhitespace(args.search, true);
+      const normalizedReplace = normalizeWhitespace(args.replace, true);
+      
+      // Smart search with fuzzy matching hints
+      const searchResult = findSearchBlock(normalizedContent, normalizedSearch);
+      
+      if (!searchResult.found) {
+        // Try one more time with trimmed search (in case of trailing whitespace issues)
+        const trimmedSearch = normalizedSearch.trim();
+        if (normalizedContent.includes(trimmedSearch)) {
+          // Found with trimmed version - use it
+          const newContent = normalizedContent.replace(trimmedSearch, normalizedReplace);
+          await fs.writeFile(resolvedPath, newContent, 'utf-8');
+          
+          const diff = computeDiff(trimmedSearch, normalizedReplace);
+          return {
+            success: true,
+            message: "Patch applied successfully (matched with trimmed whitespace).",
+            filePath: resolvedPath,
+            diff: diff.diff,
+            added: diff.added,
+            removed: diff.removed,
+            warning: "Search block was matched after trimming trailing whitespace.",
+          };
+        }
+        
+        // Not found - provide helpful error
+        return {
+          success: false,
+          error: "Search block not found in file.",
+          suggestion: searchResult.suggestions && searchResult.suggestions.length > 0
+            ? `Similar blocks found. Use read_file to see the exact formatting. Here are some similar blocks:\n${searchResult.suggestions.slice(0, 2).map((s, i) => `\nBlock ${i + 1}:\n${s.substring(0, 200)}...`).join('\n')}`
+            : "Read the file first using read_file to see the exact formatting, whitespace, and indentation. Copy the exact block you want to replace.",
+          filePath: resolvedPath,
+        };
+      }
+      
+      // Perform replacement
+      const newContent = normalizedContent.replace(normalizedSearch, normalizedReplace);
+      await fs.writeFile(resolvedPath, newContent, 'utf-8');
+      
+      // Compute diff for display
+      const diff = computeDiff(normalizedSearch, normalizedReplace);
+      
+      return {
+        success: true,
+        message: "Patch applied successfully.",
+        filePath: resolvedPath,
+        diff: diff.diff,
+        added: diff.added,
+        removed: diff.removed,
+      };
     } catch (error: any) {
-      return { success: false, error: error.message };
+      return {
+        success: false,
+        error: error.message,
+        path: args.path,
+      };
     }
   },
 };

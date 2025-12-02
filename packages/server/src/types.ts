@@ -5,6 +5,10 @@ export interface ChatMessage {
   tool_calls?: ToolCall[]; // For assistant messages with tool calls
 }
 
+export interface ToolContext {
+  workingDirectory?: string;
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -14,7 +18,7 @@ export interface ToolDefinition {
     required?: string[];
   };
   requiresApproval: boolean;
-  execute: (args: any) => Promise<any>;
+  execute: (args: any, context?: ToolContext) => Promise<any>;
 }
 
 export interface ToolCall {

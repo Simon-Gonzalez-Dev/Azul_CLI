@@ -1,7 +1,7 @@
 import { ToolDefinition } from "../types.js";
 import { readFileTool, writeFileTool, listDirTool, editFileTool } from "./filesystem.js";
 import { executeCommandTool } from "./shell.js";
-import { searchFilesTool } from "./search.js";
+import { searchFilesTool, grepTool } from "./search.js";
 
 export const tools: ToolDefinition[] = [
   readFileTool,
@@ -9,12 +9,20 @@ export const tools: ToolDefinition[] = [
   writeFileTool, // Keep for backwards compatibility but prefer edit_file
   listDirTool,
   executeCommandTool,
-  searchFilesTool,
+  grepTool, // Enhanced grep tool
+  searchFilesTool, // Simple search (backwards compatible)
 ];
 
+// Optimized tool lookup using Map for O(1) access
+const toolMap = new Map<string, ToolDefinition>();
+tools.forEach(tool => {
+  toolMap.set(tool.name, tool);
+});
+
 export function getToolByName(name: string): ToolDefinition | undefined {
-  return tools.find((tool) => tool.name === name);
+  return toolMap.get(name);
 }
 
-export { readFileTool, writeFileTool, editFileTool, listDirTool, executeCommandTool, searchFilesTool };
+// Individual tools are only used internally - no need to export them
+// They're accessible via getToolByName() or the tools array
 

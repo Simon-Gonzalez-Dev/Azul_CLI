@@ -1,5 +1,6 @@
 import { BaseLLMProvider, ProviderInfo } from "./base.js";
 import { ChatMessage } from "../types.js";
+import { parseSSEStream } from "./stream-utils.js";
 
 export class GroqProvider extends BaseLLMProvider {
   private readonly apiKey: string;
@@ -22,7 +23,7 @@ export class GroqProvider extends BaseLLMProvider {
   }
 
   async initialize(): Promise<void> {
-    console.log(`  Groq Provider ready (model: ${this.model})`);
+    // Provider ready - no console output needed (UI shows status)
   }
 
   async cleanup(): Promise<void> {
@@ -60,35 +61,7 @@ export class GroqProvider extends BaseLLMProvider {
       }
 
       const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let fullResponse = "";
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed === "data: [DONE]") continue;
-          if (!trimmed.startsWith("data:")) continue;
-
-          try {
-            const payload = JSON.parse(trimmed.slice(5).trim());
-            const delta = payload.choices?.[0]?.delta?.content;
-            if (delta) {
-              fullResponse += delta;
-              if (onToken) onToken(fullResponse);
-            }
-          } catch {
-            // Ignore partial chunks
-          }
-        }
-      }
+      const fullResponse = await parseSSEStream(reader, onToken);
 
       const promptText = formattedMessages.map((m) => m.content).join("\n");
       const inputTokens = this.estimateTokensFromText(promptText);
@@ -100,7 +73,6 @@ export class GroqProvider extends BaseLLMProvider {
         outputTokens,
       };
     } catch (error) {
-      console.error("Groq generation error:", error);
       throw error;
     }
   }

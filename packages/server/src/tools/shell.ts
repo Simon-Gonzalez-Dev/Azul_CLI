@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { ToolDefinition } from "../types.js";
+import { ToolDefinition, ToolContext } from "../types.js";
 
 export const executeCommandTool: ToolDefinition = {
   name: "execute_command",
@@ -13,15 +13,15 @@ export const executeCommandTool: ToolDefinition = {
       },
       cwd: {
         type: "string",
-        description: "The working directory to execute the command in (optional)",
+        description: "The working directory to execute the command in (optional, defaults to agent's working directory)",
       },
     },
     required: ["command"],
   },
   requiresApproval: true,
-  async execute(args: { command: string; cwd?: string }) {
+  async execute(args: { command: string; cwd?: string }, context?: ToolContext) {
     const timeoutMs = 5000;
-    const cwd = args.cwd || process.cwd();
+    const cwd = args.cwd || context?.workingDirectory || process.cwd();
 
     return new Promise((resolve) => {
       let output = "";
