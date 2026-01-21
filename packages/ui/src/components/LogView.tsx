@@ -141,14 +141,19 @@ export const LogView: React.FC<LogViewProps> = ({ messages, agentMode = 'normal'
 
       case "tool_result":
         const result = message.result || {};
-        // Silent Actor pattern: Show minimal feedback
+        const toolName = result.toolName || message.tool || "tool";
+        const toolIndexInfo = message.totalTools > 1
+          ? ` (${(message.toolIndex || 0) + 1}/${message.totalTools})`
+          : "";
+
+        // Show tool name context for all results
         if (result.success) {
-          // Show diff if available (for file edits)
+          // Show diff if available (for file edits/writes)
           if (result.diff && result.filePath) {
             return (
               <Box key={messageKey} marginY={0} flexDirection="column">
                 <Text color="green" dimColor>
-                  {result.message || "Updated"}
+                  ✓ {toolName}{toolIndexInfo}: {result.message || "Updated"}
                 </Text>
                 <DiffView
                   diff={result.diff}
@@ -159,19 +164,38 @@ export const LogView: React.FC<LogViewProps> = ({ messages, agentMode = 'normal'
               </Box>
             );
           }
-          // Minimal success message
+          // Show content for bash/grep/view if available
+          if (result.content && result.content.length > 0) {
+            const contentLines = result.content.split('\n');
+            const isLong = contentLines.length > 20;
+            const displayContent = isLong
+              ? contentLines.slice(0, 20).join('\n') + `\n... (${contentLines.length - 20} more lines)`
+              : result.content;
+
+            return (
+              <Box key={messageKey} marginY={0} flexDirection="column">
+                <Text color="green" dimColor>
+                  ✓ {toolName}{toolIndexInfo}: {result.message || "Completed"}
+                </Text>
+                <Box borderStyle="single" borderColor="gray" paddingX={1} marginTop={0}>
+                  <Text dimColor>{displayContent}</Text>
+                </Box>
+              </Box>
+            );
+          }
+          // Minimal success message with tool name
           return (
             <Box key={messageKey} marginY={0}>
               <Text color="green" dimColor>
-                ✓ {result.message || "Completed"}
+                ✓ {toolName}{toolIndexInfo}: {result.message || "Completed"}
               </Text>
             </Box>
           );
         }
-        // Show error (errors are important to see)
+        // Show error with tool name context
         return (
           <Box key={messageKey} marginY={0}>
-            <Text color="red">✗ {result.message || result.error || "Failed"}</Text>
+            <Text color="red">✗ {toolName}{toolIndexInfo}: {result.message || result.error || "Failed"}</Text>
           </Box>
         );
 
@@ -205,13 +229,26 @@ export const LogView: React.FC<LogViewProps> = ({ messages, agentMode = 'normal'
           displayContent = withoutToolCode;
         }
         
-        // Don't render empty streams
-        if (!displayThought && !displayContent && toolCalls.length === 0) {
+        // Show "Thinking..." even for empty streams if streaming
+        const showThinkingIndicator = isStreaming && !displayThought && !displayContent && toolCalls.length === 0;
+
+        // Don't render truly empty completed streams
+        if (!displayThought && !displayContent && toolCalls.length === 0 && !isStreaming) {
           return null;
         }
         
         return (
           <Box key={messageKey} marginY={0} flexDirection="column">
+            {/* Show thinking indicator even when no content yet */}
+            {showThinkingIndicator && (
+              <Box flexDirection="column">
+                <Box>
+                  <Text color="magenta" bold>Azul</Text>
+                  <Text dimColor> (thinking...)</Text>
+                  <Text color="cyan">▌</Text>
+                </Box>
+              </Box>
+            )}
             {displayThought && (
               <Box marginBottom={(displayContent || toolCalls.length > 0) ? 1 : 0} flexDirection="column">
                 <Box>
@@ -308,6 +345,15 @@ export const LogView: React.FC<LogViewProps> = ({ messages, agentMode = 'normal'
         return (
           <Box key={messageKey} marginY={0}>
             <Text color="red"> Error: {message.message}</Text>
+          </Box>
+        );
+
+      case "task_complete":
+        // Task completion message with checkmark
+        return (
+          <Box key={messageKey} marginY={1} paddingX={1}>
+            <Text color="green" bold>✓ </Text>
+            <Text color="green">{(message as any).summary || "Task complete."}</Text>
           </Box>
         );
 

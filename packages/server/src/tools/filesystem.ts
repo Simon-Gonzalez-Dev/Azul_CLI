@@ -263,15 +263,19 @@ export const lsTool: ToolDefinition = {
         if (!stats.isDirectory()) {
           return {
             success: false,
+            toolName: "ls",
             error: `Path is not a directory: ${resolvedPath}`,
-            suggestion: "Use view to read files.",
+            message: `Path is not a directory: ${resolvedPath}. Use view to read files.`,
+            filePath: resolvedPath,
           };
         }
       } catch {
         return {
           success: false,
+          toolName: "ls",
           error: `Directory not found: ${resolvedPath}`,
-          suggestion: "Check the path or use ls on a parent directory.",
+          message: `Directory not found: ${resolvedPath}. Check the path or use ls on a parent directory.`,
+          filePath: resolvedPath,
         };
       }
 
@@ -297,15 +301,18 @@ export const lsTool: ToolDefinition = {
 
       return {
         success: true,
+        toolName: "ls",
         content: output,
-        path: resolvedPath,
+        filePath: resolvedPath,
         message: `Listed ${items.length} items in ${resolvedPath}`,
       };
     } catch (error: any) {
       return {
         success: false,
+        toolName: "ls",
         error: error.message,
-        path: args.path,
+        message: error.message,
+        filePath: args.path,
       };
     }
   },
@@ -339,8 +346,10 @@ export const viewTool: ToolDefinition = {
       } catch {
         return {
           success: false,
+          toolName: "view",
           error: `File not found: ${resolvedPath}`,
-          suggestion: "Use ls to check the directory structure.",
+          message: `File not found: ${resolvedPath}. Use ls to check the directory structure.`,
+          filePath: resolvedPath,
         };
       }
 
@@ -354,15 +363,19 @@ export const viewTool: ToolDefinition = {
 
       return {
         success: true,
+        toolName: "view",
         content: numberedContent,
-        path: resolvedPath,
+        filePath: resolvedPath,
         message: `Read ${lines.length} lines from ${resolvedPath}`,
+        lines: lines.length,
       };
     } catch (error: any) {
       return {
         success: false,
+        toolName: "view",
         error: error.message,
-        path: args.path,
+        message: error.message,
+        filePath: args.path,
       };
     }
   },
@@ -405,8 +418,10 @@ export const editTool: ToolDefinition = {
       } catch (error: any) {
         return {
           success: false,
+          toolName: "edit",
           error: `File not found: ${resolvedPath}`,
-          suggestion: "Use view to verify the file exists, or write to create it.",
+          message: `File not found: ${resolvedPath}. Use view to verify the file exists, or write to create it.`,
+          filePath: resolvedPath,
         };
       }
 
@@ -425,8 +440,9 @@ export const editTool: ToolDefinition = {
 
         return {
           success: false,
+          toolName: "edit",
           error: "Search block not found in file.",
-          suggestion: errorMsg,
+          message: errorMsg,
           filePath: resolvedPath,
         };
       }
@@ -461,6 +477,7 @@ export const editTool: ToolDefinition = {
 
       return {
         success: true,
+        toolName: "edit",
         message: `Edited ${resolvedPath}${matchNote}`,
         filePath: resolvedPath,
         diff: diff.diff,
@@ -470,8 +487,10 @@ export const editTool: ToolDefinition = {
     } catch (error: any) {
       return {
         success: false,
+        toolName: "edit",
         error: error.message,
-        path: args.path,
+        message: error.message,
+        filePath: args.path,
       };
     }
   },
@@ -520,21 +539,33 @@ export const writeTool: ToolDefinition = {
       const normalizedContent = normalizeWhitespace(args.content, true);
       await fs.writeFile(resolvedPath, normalizedContent, 'utf-8');
 
-      const lines = normalizedContent.split('\n').length;
+      const contentLines = normalizedContent.split('\n');
+      const lineCount = contentLines.length;
       const action = fileExists ? "Overwrote" : "Created";
+
+      // Generate diff-like output showing all content as additions (for new files)
+      // or a full replacement diff (for overwrites)
+      const diffLines = contentLines.map(line => `+ ${line}`);
+      const diff = diffLines.join('\n');
 
       return {
         success: true,
-        message: `${action} ${resolvedPath} (${lines} lines)`,
+        toolName: "write",
+        message: `${action} ${resolvedPath} (${lineCount} lines)`,
         filePath: resolvedPath,
         created: !fileExists,
-        lines,
+        lines: lineCount,
+        diff: diff,
+        added: lineCount,
+        removed: 0,
       };
     } catch (error: any) {
       return {
         success: false,
+        toolName: "write",
         error: error.message,
-        path: args.path,
+        message: error.message,
+        filePath: args.path,
       };
     }
   },

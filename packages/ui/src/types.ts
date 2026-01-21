@@ -8,6 +8,9 @@ export type InputMode = 'chat' | 'bash' | 'command';
 /** Agent execution mode (toggled with Shift+Tab) */
 export type AgentMode = 'normal' | 'plan';
 
+/** Agent status for state tracking */
+export type AgentStatus = 'IDLE' | 'THINKING' | 'STREAMING' | 'EXECUTING_TOOL' | 'AWAITING_APPROVAL' | 'COMPLETE';
+
 /** Plan step for plan mode */
 export interface PlanStep {
   id: string;
@@ -42,11 +45,16 @@ export interface AppState {
   tokenStats: TokenStats;
   providerStatus?: ProviderStatusMessage;
   contextStats?: ContextStats;
-  // New mode-related state
+  // Mode-related state
   inputMode: InputMode;
   agentMode: AgentMode;
   planSteps: PlanStep[] | null;
   pendingPlan: boolean;  // True when waiting for plan approval
+  // Agent status tracking (persistent across recursion)
+  agentStatus: AgentStatus;
+  currentToolName?: string;
+  currentToolIndex: number;
+  totalTools: number;
 }
 
 // =============================================================================
@@ -117,6 +125,8 @@ export const COMMANDS: Command[] = [
   { name: "ls", description: "List directory contents" },
   { name: "plan", description: "Toggle plan mode", shortcut: "Shift+Tab" },
   { name: "config", description: "Show configuration" },
+  { name: "init", description: "Generate AZUL.md project instructions" },
+  { name: "memory", description: "Edit AZUL.md in your editor" },
   { name: "quit", description: "Exit the application" },
 ];
 

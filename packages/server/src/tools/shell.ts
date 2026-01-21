@@ -174,7 +174,10 @@ export const bashTool: ToolDefinition = {
     if (risk.level === 'blocked') {
       return {
         success: false,
+        toolName: "bash",
         error: `Command blocked: ${risk.reason}`,
+        message: `Command blocked: ${risk.reason}`,
+        commandPreview: args.command,
         blocked: true,
         riskLevel: 'blocked',
       };
@@ -205,20 +208,32 @@ export const bashTool: ToolDefinition = {
         if (completed) return;
         completed = true;
 
+        const stdout = output.trim();
+        const stderr = errorOutput.trim();
+        // Combine stdout/stderr into content for UI display
+        const content = [stdout, stderr].filter(Boolean).join('\n');
+
         if (code === 0) {
           resolve({
             success: true,
-            stdout: output.trim(),
-            stderr: errorOutput.trim(),
-            message: "Command completed successfully",
+            toolName: "bash",
+            stdout,
+            stderr,
+            content,
+            message: stdout ? `Command completed successfully` : "Command completed (no output)",
+            commandPreview: args.command,
             riskLevel: risk.level,
           });
         } else {
           resolve({
             success: false,
-            stdout: output.trim(),
-            stderr: errorOutput.trim(),
+            toolName: "bash",
+            stdout,
+            stderr,
+            content,
             error: `Command failed with exit code ${code}`,
+            message: stderr || `Command failed with exit code ${code}`,
+            commandPreview: args.command,
             riskLevel: risk.level,
           });
         }
@@ -231,11 +246,18 @@ export const bashTool: ToolDefinition = {
         child.kill();
         completed = true;
 
+        const stdout = output.trim();
+        const stderr = errorOutput.trim();
+        const content = [stdout, stderr].filter(Boolean).join('\n');
+
         resolve({
           success: true,
-          stdout: output.trim(),
-          stderr: errorOutput.trim(),
+          toolName: "bash",
+          stdout,
+          stderr,
+          content,
           message: `Command timed out after ${timeoutMs / 1000}s. Partial output captured.`,
+          commandPreview: args.command,
           timedOut: true,
           riskLevel: risk.level,
         });
@@ -246,11 +268,20 @@ export const bashTool: ToolDefinition = {
         if (completed) return;
         completed = true;
         clearTimeout(timer);
+
+        const stdout = output.trim();
+        const stderr = errorOutput.trim();
+        const content = [stdout, stderr].filter(Boolean).join('\n');
+
         resolve({
           success: false,
+          toolName: "bash",
           error: err.message,
-          stdout: output.trim(),
-          stderr: errorOutput.trim(),
+          message: err.message,
+          stdout,
+          stderr,
+          content,
+          commandPreview: args.command,
           riskLevel: risk.level,
         });
       });

@@ -2,6 +2,8 @@ import React from "react";
 import { Box, Text } from "ink";
 import { TokenStats, ProviderStatusMessage, ContextStats, AgentMode } from "../types.js";
 
+type AgentStatus = 'IDLE' | 'THINKING' | 'STREAMING' | 'EXECUTING_TOOL' | 'AWAITING_APPROVAL' | 'COMPLETE';
+
 interface StatusBarProps {
   connected: boolean;
   modelName?: string;
@@ -9,6 +11,10 @@ interface StatusBarProps {
   providerStatus?: ProviderStatusMessage;
   contextStats?: ContextStats;
   agentMode?: AgentMode;
+  agentStatus?: AgentStatus;
+  currentToolName?: string;
+  currentToolIndex?: number;
+  totalTools?: number;
 }
 
 export const StatusBar: React.FC<StatusBarProps> = ({
@@ -18,6 +24,10 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   providerStatus,
   contextStats,
   agentMode = 'normal',
+  agentStatus = 'IDLE',
+  currentToolName,
+  currentToolIndex = 0,
+  totalTools = 0,
 }) => {
   const formatTokens = (tokens: number): string => {
     if (tokens >= 1_000_000) {
@@ -59,6 +69,29 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   const modeBadgeColor = agentMode === 'plan' ? 'magenta' : 'cyan';
   const modeBadgeText = agentMode === 'plan' ? 'PLAN' : 'NORMAL';
 
+  // Agent status display
+  const getStatusDisplay = () => {
+    switch (agentStatus) {
+      case 'THINKING':
+        return { text: 'Thinking...', color: 'yellow' };
+      case 'STREAMING':
+        return { text: 'Streaming...', color: 'cyan' };
+      case 'EXECUTING_TOOL':
+        const toolInfo = totalTools > 1
+          ? `${currentToolName} (${currentToolIndex + 1}/${totalTools})`
+          : currentToolName || 'tool';
+        return { text: `Running ${toolInfo}`, color: 'blue' };
+      case 'AWAITING_APPROVAL':
+        return { text: `Approval: ${currentToolName}`, color: 'yellow' };
+      case 'COMPLETE':
+        return { text: 'Complete', color: 'green' };
+      default:
+        return { text: 'Ready', color: 'gray' };
+    }
+  };
+
+  const statusDisplay = getStatusDisplay();
+
   return (
     <Box
       width="100%"
@@ -89,11 +122,19 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         </Box>
       </Box>
 
-      {/* Bottom row: Provider + Context */}
+      {/* Bottom row: Provider + Status + Context */}
       <Box justifyContent="space-between" width="100%" marginTop={0}>
-        <Text dimColor>
-          {providerName} • {modelDisplayName}
-        </Text>
+        <Box>
+          <Text dimColor>
+            {providerName} • {modelDisplayName}
+          </Text>
+          {agentStatus !== 'IDLE' && (
+            <Text>
+              <Text dimColor> • </Text>
+              <Text color={statusDisplay.color as any}>{statusDisplay.text}</Text>
+            </Text>
+          )}
+        </Box>
         <Box>
           {/* Context usage bar */}
           {contextStats && (

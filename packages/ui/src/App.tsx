@@ -28,6 +28,7 @@ export interface AppProps {
   onBashCommand?: (command: string) => void;
   onExecutePlan?: (planId: string) => void;
   onCancelPlan?: () => void;
+  onOpenMemory?: () => void;
 }
 
 export const App: React.FC<AppProps> = ({
@@ -40,6 +41,7 @@ export const App: React.FC<AppProps> = ({
   onBashCommand,
   onExecutePlan,
   onCancelPlan,
+  onOpenMemory,
 }) => {
   const [state, setState] = useState<AppState>({
     messages: [],
@@ -62,6 +64,11 @@ export const App: React.FC<AppProps> = ({
     agentMode: 'normal',
     planSteps: null,
     pendingPlan: false,
+    // Agent status tracking
+    agentStatus: 'IDLE' as 'IDLE' | 'THINKING' | 'STREAMING' | 'EXECUTING_TOOL' | 'AWAITING_APPROVAL' | 'COMPLETE',
+    currentToolName: undefined as string | undefined,
+    currentToolIndex: 0,
+    totalTools: 0,
   });
 
   useEffect(() => {
@@ -155,6 +162,15 @@ export const App: React.FC<AppProps> = ({
           },
         ],
       }));
+    } else if (message.type === "agent_status") {
+      // Track agent status for UI state coherence
+      setState((prev) => ({
+        ...prev,
+        agentStatus: message.status,
+        currentToolName: message.toolName,
+        currentToolIndex: message.toolIndex ?? prev.currentToolIndex,
+        totalTools: message.totalTools ?? prev.totalTools,
+      }));
     } else if (message.type === "agent_stream") {
       // Unified streaming message handler
       setState((prev) => {
@@ -170,9 +186,12 @@ export const App: React.FC<AppProps> = ({
           }
         }
 
-        // Don't add empty streams
+        // Allow streams even without content if state is "streaming" - shows "Thinking..." immediately
+        // Only filter out truly empty streams that aren't in a meaningful state
         const hasContent = message.thought || (message.content && message.content.trim()) || (message.toolCalls && message.toolCalls.length > 0);
-        if (!hasContent && !message.isComplete) {
+        const isStreamingState = message.state === "streaming" || message.state === "tools_executing";
+
+        if (!hasContent && !message.isComplete && !isStreamingState) {
           return prev;
         }
 
@@ -184,7 +203,7 @@ export const App: React.FC<AppProps> = ({
             timestamp: newMessages[streamingIndex].timestamp || Date.now(),
           };
         } else {
-          // Create new stream
+          // Create new stream (even if empty, to show "Thinking..." state)
           newMessages.push({
             ...message,
             timestamp: Date.now(),
@@ -399,6 +418,32 @@ Context: ${state.contextStats?.usagePercent || 0}% used`,
         return;
       }
 
+      if (command === "init") {
+        // Show status message
+        handleServerMessage({
+          type: "system",
+          message: "Analyzing project to generate AZUL.md...",
+          timestamp: Date.now(),
+        });
+
+        // Send init command to agent - it will analyze and create AZUL.md
+        onUserInput("[SYSTEM:INIT]", state.agentMode);
+        return;
+      }
+
+      if (command === "memory") {
+        if (onOpenMemory) {
+          onOpenMemory();
+        } else {
+          handleServerMessage({
+            type: "error",
+            message: "Memory command not available",
+            timestamp: Date.now(),
+          });
+        }
+        return;
+      }
+
       if (command === "help") {
         handleServerMessage({
           type: "system",
@@ -410,6 +455,8 @@ Context: ${state.contextStats?.usagePercent || 0}% used`,
 /ls [dir] - List directory contents
 /plan     - Toggle plan mode (Shift+Tab)
 /config   - Show configuration
+/init     - Generate AZUL.md project instructions
+/memory   - Edit AZUL.md in your editor
 /quit     - Exit the application
 
 Input Modes:
@@ -488,6 +535,10 @@ Escape    - Clear input`,
         providerStatus={state.providerStatus}
         contextStats={state.contextStats}
         agentMode={state.agentMode}
+        agentStatus={state.agentStatus}
+        currentToolName={state.currentToolName}
+        currentToolIndex={state.currentToolIndex}
+        totalTools={state.totalTools}
       />
       <Box flexDirection="column" flexGrow={1} paddingY={1}>
         <LogView

@@ -24,6 +24,24 @@ export const PermissionModal: React.FC<PermissionModalProps> = ({
     }
   });
 
+  // Determine if this is a bash command (show command preview)
+  const isBash = approval.tool === "bash";
+  const command = isBash ? approval.args?.command : null;
+
+  // Get risk level color for bash commands
+  const getRiskColor = () => {
+    // Check for dangerous patterns in command
+    if (!command) return "yellow";
+    const lowerCmd = command.toLowerCase();
+    if (lowerCmd.includes("sudo") || lowerCmd.includes("rm -rf") || lowerCmd.includes("chmod 777")) {
+      return "red";
+    }
+    if (lowerCmd.includes("rm ") || lowerCmd.includes("mv ") || lowerCmd.includes("git push")) {
+      return "yellow";
+    }
+    return "cyan";
+  };
+
   return (
     <Box
       flexDirection="column"
@@ -38,27 +56,47 @@ export const PermissionModal: React.FC<PermissionModalProps> = ({
       <Text>
         The agent wants to execute: <Text bold color="cyan">{approval.tool}</Text>
       </Text>
-      <Text> </Text>
-      <Text dimColor>Arguments:</Text>
-      <Text>{JSON.stringify(approval.args, null, 2)}</Text>
-      
+
+      {/* Bash command preview */}
+      {isBash && command && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold>Command:</Text>
+          <Box borderStyle="single" borderColor={getRiskColor()} paddingX={1}>
+            <Text color={getRiskColor() as any}>$ {command}</Text>
+          </Box>
+          {getRiskColor() === "red" && (
+            <Text color="red" bold>⚠️  HIGH RISK COMMAND - Review carefully!</Text>
+          )}
+        </Box>
+      )}
+
+      {/* Non-bash: show arguments */}
+      {!isBash && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text dimColor>Arguments:</Text>
+          <Text>{JSON.stringify(approval.args, null, 2)}</Text>
+        </Box>
+      )}
+
+      {/* Diff view for file operations */}
       {approval.diff && (
         <Box flexDirection="column" marginTop={1}>
           <Text bold>Proposed Changes:</Text>
-          <DiffView 
-            diff={approval.diff} 
-            added={approval.added} 
-            removed={approval.removed} 
+          <DiffView
+            diff={approval.diff}
+            added={approval.added}
+            removed={approval.removed}
           />
         </Box>
       )}
-      
+
       <Text> </Text>
       <Box>
         <Text color="green">Y</Text>
         <Text> = Approve | </Text>
         <Text color="red">N</Text>
-        <Text> = Deny</Text>
+        <Text> = Deny | </Text>
+        <Text dimColor>Esc = Cancel</Text>
       </Box>
     </Box>
   );

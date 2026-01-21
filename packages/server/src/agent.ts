@@ -1,7 +1,7 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import { ILLMService } from "./llm-interface.js";
-import { ChatMessage, ToolCall, ToolDefinition } from "./types.js";
+import { ChatMessage, ToolCall, ToolDefinition, AgentStatus } from "./types.js";
 import { tools, getToolByName } from "./tools/index.js";
 import { computeDiff } from "./tools/filesystem.js";
 import {
@@ -43,7 +43,12 @@ async function loadAzulMd(workingDir: string): Promise<string | null> {
     try {
       const content = await fs.readFile(searchPath, "utf-8");
       console.log(`Loaded project instructions from: ${searchPath}`);
-      return content;
+
+      // Process @import directives
+      const basePath = path.dirname(searchPath);
+      const processedContent = await processAzulMdImports(content, basePath);
+
+      return processedContent;
     } catch {
       // File not found, continue searching
     }
@@ -51,6 +56,73 @@ async function loadAzulMd(workingDir: string): Promise<string | null> {
 
   return null;
 }
+
+/**
+ * Process @import directives in AZUL.md content
+ * Syntax: @path/to/file or @import path/to/file
+ * Lines starting with @ followed by a path are treated as file imports
+ */
+async function processAzulMdImports(
+  content: string,
+  basePath: string
+): Promise<string> {
+  const importedPaths = new Set<string>(); // Prevent circular imports
+  const lines = content.split("\n");
+  const result: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    // Check for import directives: @path/to/file or @import path/to/file
+    if (trimmed.startsWith("@")) {
+      let importPath: string | null = null;
+
+      // Handle @import syntax
+      if (trimmed.startsWith("@import ")) {
+        importPath = trimmed.slice(8).trim();
+      }
+      // Handle @path syntax (must contain / or start with . to distinguish from mentions)
+      else if (trimmed.includes("/") || trimmed.startsWith("@.")) {
+        importPath = trimmed.slice(1).trim();
+      }
+
+      if (importPath) {
+        // Resolve path relative to AZUL.md location
+        const resolvedPath = path.isAbsolute(importPath)
+          ? importPath
+          : path.resolve(basePath, importPath);
+
+        // Skip if already imported (circular import protection)
+        if (importedPaths.has(resolvedPath)) {
+          result.push(`<!-- Skipped circular import: ${importPath} -->`);
+          continue;
+        }
+
+        importedPaths.add(resolvedPath);
+
+        try {
+          const importedContent = await fs.readFile(resolvedPath, "utf-8");
+          result.push(`<!-- @import ${importPath} -->`);
+          result.push(importedContent);
+          result.push(`<!-- end @import ${importPath} -->`);
+          continue;
+        } catch {
+          // If import fails, keep original line with warning
+          result.push(`<!-- Failed to import: ${importPath} -->`);
+          result.push(line);
+          continue;
+        }
+      }
+    }
+
+    result.push(line);
+  }
+
+  return result.join("\n");
+}
+
+// Maximum iterations to prevent infinite loops
+const MAX_AGENT_ITERATIONS = 10;
 
 export class Agent {
   private llm: ILLMService;
@@ -61,6 +133,11 @@ export class Agent {
   private streamingResponse: string = "";
   private workingDirectory: string;
   private compressionConfig: CompressionConfig;
+
+  // Persistent agent state tracking (across recursion loops)
+  private agentStatus: AgentStatus = 'IDLE';
+  private currentToolCalls: ToolCall[] = [];
+  private executingToolIndex: number = 0;
 
   constructor(sendMessage: MessageCallback, llm: ILLMService, workingDirectory?: string, contextSize?: number) {
     this.sendMessage = sendMessage;
@@ -180,6 +257,53 @@ You can include multiple <tool_code> blocks if needed.
 - Use write on existing files (use edit)
 - Use line numbers for editing (use unique code blocks)
 - Output text outside XML tags
+
+---
+
+## TASK COMPLETION (CRITICAL)
+
+**When to STOP:**
+- After completing ALL requested actions successfully
+- After providing the final answer or confirmation
+- When there are no more actions needed to fulfill the user's request
+
+**DO NOT continue looping:**
+- Do not view/verify files after successful writes unless explicitly requested
+- Do not make additional edits after the request is fulfilled
+- Do not start new actions that weren't requested
+- One successful write/edit is usually enough - trust the tool result
+
+**Completion Signal:**
+When the task is complete, output ONLY a thought with a brief summary and checkmark:
+
+<thought>
+✓ [Brief summary of what was done - ONE sentence max]
+</thought>
+
+Example completions:
+- ✓ Created fizzbuzz.py with the FizzBuzz implementation.
+- ✓ Updated config.json with the new API endpoint.
+- ✓ Fixed the syntax error in main.ts line 42.
+
+---
+
+## COMPLEMENTARY TEXT STYLE
+
+Before EACH tool call, include a brief one-line description:
+
+<thought>
+I'll create a Python file with the FizzBuzz solution.
+</thought>
+<tool_code>
+<tool_name>write</tool_name>
+...
+</tool_code>
+
+**Style Guidelines:**
+- Keep descriptions to ONE sentence
+- Start with "I'll..." or "Let me..."
+- Be specific but concise
+- No multi-paragraph explanations
 ${azulMdSection}
 
 ## ENVIRONMENT
@@ -187,6 +311,13 @@ Working Directory: ${this.workingDirectory}`;
   }
 
   async handleUserMessage(content: string): Promise<void> {
+    // Check for system commands
+    if (content.startsWith("[SYSTEM:INIT]")) {
+      // Import the init prompt dynamically
+      const { createInitMessage } = await import("./prompts/init.js");
+      content = createInitMessage(this.workingDirectory);
+    }
+
     this.conversationHistory.push({
       role: "user",
       content,
@@ -203,6 +334,9 @@ Working Directory: ${this.workingDirectory}`;
   reset(): void {
     this.conversationHistory = [];
     this.llm.resetTokenStats();
+    this.agentStatus = 'IDLE';
+    this.currentToolCalls = [];
+    this.executingToolIndex = 0;
 
     this.pendingApprovals.forEach((pending) => {
       pending.resolve(false);
@@ -210,8 +344,42 @@ Working Directory: ${this.workingDirectory}`;
     this.pendingApprovals.clear();
   }
 
-  private async runAgentLoop(): Promise<void> {
+  // Update and emit agent status for UI coherence
+  private setAgentStatus(status: AgentStatus, toolName?: string, toolIndex?: number): void {
+    this.agentStatus = status;
+    if (toolIndex !== undefined) {
+      this.executingToolIndex = toolIndex;
+    }
+
+    this.sendMessage({
+      type: "agent_status",
+      status,
+      toolName,
+      toolIndex: this.executingToolIndex,
+      totalTools: this.currentToolCalls.length,
+    });
+  }
+
+  // Get current agent status (for external queries)
+  getAgentStatus(): AgentStatus {
+    return this.agentStatus;
+  }
+
+  private async runAgentLoop(loopCount: number = 0): Promise<void> {
+    // Prevent infinite loops with maximum iteration check
+    if (loopCount >= MAX_AGENT_ITERATIONS) {
+      this.setAgentStatus('IDLE');
+      this.sendMessage({
+        type: "system",
+        message: `⚠️ Reached maximum iterations (${MAX_AGENT_ITERATIONS}). Task may be incomplete. Please provide more specific instructions.`,
+      });
+      return;
+    }
+
     try {
+      // Set initial status to THINKING
+      this.setAgentStatus('THINKING');
+
       // Stream state machine
       type StreamState = "idle" | "streaming" | "complete" | "tools_executing" | "done";
       let streamState: StreamState = "idle";
@@ -325,9 +493,30 @@ Working Directory: ${this.workingDirectory}`;
       const totalStats = this.llm.getTokenStats();
       const finalParsed = parseStreamingContent(finalContent);
 
-      // Update parsed tool calls with final parse
+      // Merge streaming-detected tool calls with final parse (don't replace entirely)
+      // This ensures we don't lose tool calls detected during streaming
       if (finalParsed.toolCalls.length > 0) {
-        parsedToolCalls = finalParsed.toolCalls;
+        // If final parse found more tool calls, use those (they're more complete)
+        // But if streaming found some that final didn't, keep them
+        const existingNames = new Set(parsedToolCalls.map(tc => `${tc.name}:${JSON.stringify(tc.arguments)}`));
+        const finalNames = new Set(finalParsed.toolCalls.map(tc => `${tc.name}:${JSON.stringify(tc.arguments)}`));
+
+        // Start with streaming results, add any new ones from final parse
+        const mergedToolCalls = [...parsedToolCalls];
+        for (const tc of finalParsed.toolCalls) {
+          const key = `${tc.name}:${JSON.stringify(tc.arguments)}`;
+          if (!existingNames.has(key)) {
+            mergedToolCalls.push(tc);
+          }
+        }
+
+        // If final parse has strictly more/different results, prefer it
+        // (streaming parser may have incomplete parsing)
+        if (finalParsed.toolCalls.length >= parsedToolCalls.length) {
+          parsedToolCalls = finalParsed.toolCalls;
+        } else {
+          parsedToolCalls = mergedToolCalls;
+        }
       }
 
       // Send final unified stream message with completion
@@ -355,6 +544,12 @@ Working Directory: ${this.workingDirectory}`;
       // If parsing succeeded and we have tool calls
       if (parsedResponse.tool_calls && parsedResponse.tool_calls.length > 0) {
         streamState = "tools_executing";
+
+        // Track current tool calls for status reporting
+        this.currentToolCalls = parsedResponse.tool_calls;
+        this.executingToolIndex = 0;
+        this.setAgentStatus('EXECUTING_TOOL', parsedResponse.tool_calls[0]?.name, 0);
+
         this.conversationHistory.push({
           role: "assistant",
           content: parsedResponse.thought || "I'll use tools to complete this task.",
@@ -374,20 +569,43 @@ Working Directory: ${this.workingDirectory}`;
 
         await this.executeToolCalls(parsedResponse.tool_calls);
 
-        // Mark as done after tools execute
+        // Mark as done after tools execute, clear tool tracking
         streamState = "done";
-        await this.runAgentLoop();
+        this.currentToolCalls = [];
+        this.executingToolIndex = 0;
+
+        await this.runAgentLoop(loopCount + 1);
         return;
       }
 
       // If no tool calls but we have thought, treat as final response
       if (parsedResponse.thought && (!parsedResponse.tool_calls || parsedResponse.tool_calls.length === 0)) {
           streamState = "done";
+          this.setAgentStatus('COMPLETE');
+
+          // Check for task completion signal (✓ or completion keywords)
+          const thought = parsedResponse.thought;
+          const isTaskComplete = thought.includes("✓") ||
+                                 thought.toLowerCase().includes("task complete") ||
+                                 thought.toLowerCase().includes("completed successfully") ||
+                                 (thought.toLowerCase().includes("done") && thought.length < 200);
+
+          if (isTaskComplete) {
+            // Send task completion notification to UI
+            this.sendMessage({
+              type: "task_complete",
+              summary: thought.replace(/^✓\s*/, "").trim(), // Remove leading checkmark for cleaner display
+            });
+          }
+
           // Stream message already sent with completion, just update conversation
           this.conversationHistory.push({
             role: "assistant",
             content: parsedResponse.thought,
           });
+
+          // Reset to IDLE after task completion
+          this.setAgentStatus('IDLE');
           return;
       }
 
@@ -419,7 +637,7 @@ Working Directory: ${this.workingDirectory}`;
              };
              (retryMsg as any)[retryKey] = currentRetryCount + 1;
              this.conversationHistory.push(retryMsg);
-             await this.runAgentLoop();
+             await this.runAgentLoop(loopCount + 1);
              return;
          }
 
@@ -431,7 +649,7 @@ Working Directory: ${this.workingDirectory}`;
              };
              (retryMsg as any)[retryKey] = currentRetryCount + 1;
              this.conversationHistory.push(retryMsg);
-             await this.runAgentLoop();
+             await this.runAgentLoop(loopCount + 1);
              return;
          }
 
@@ -445,6 +663,7 @@ Working Directory: ${this.workingDirectory}`;
 
     } catch (error: any) {
       console.error("Error in agent loop:", error);
+      this.setAgentStatus('IDLE');
       this.sendMessage({
         type: "error",
         message: error.message || "An error occurred",
@@ -598,8 +817,12 @@ Working Directory: ${this.workingDirectory}`;
   }
 
   private async executeToolCalls(toolCalls: ToolCall[]): Promise<void> {
-    for (const toolCall of toolCalls) {
+    for (let i = 0; i < toolCalls.length; i++) {
+      const toolCall = toolCalls[i];
       const tool = getToolByName(toolCall.name);
+
+      // Update agent status for each tool
+      this.setAgentStatus('EXECUTING_TOOL', toolCall.name, i);
 
       // Generate unique ID for tool call if not provided
       const toolCallId = toolCall.id || `call_${Math.random().toString(36).substring(2, 15)}`;
@@ -632,14 +855,17 @@ Working Directory: ${this.workingDirectory}`;
       });
 
       if (tool.requiresApproval) {
+        this.setAgentStatus('AWAITING_APPROVAL', toolCall.name, i);
         const approved = await this.requestApproval(toolCall.name, toolCall.arguments);
 
         if (!approved) {
-          const result = { success: false, error: "User denied approval" };
+          const result = { success: false, error: "User denied approval", toolName: toolCall.name };
           this.sendMessage({
             type: "tool_result",
             tool: toolCall.name,
-            result: { success: false, message: "User denied approval" }, // Minimal result
+            toolIndex: i,
+            totalTools: toolCalls.length,
+            result: { success: false, toolName: toolCall.name, message: "User denied approval" },
           });
 
           this.conversationHistory.push({
@@ -649,24 +875,34 @@ Working Directory: ${this.workingDirectory}`;
           });
           continue;
         }
+
+        // Resume EXECUTING_TOOL status after approval
+        this.setAgentStatus('EXECUTING_TOOL', toolCall.name, i);
       }
 
       try {
         // Pass context to tool execution
         const result = await tool.execute(toolCall.arguments, toolContext);
 
-        // Show minimal result (Silent Actor pattern)
+        // Show minimal result (Silent Actor pattern) with toolName from result
         this.sendMessage({
           type: "tool_result",
           tool: toolCall.name,
+          toolIndex: i,
+          totalTools: toolCalls.length,
           result: {
             success: result.success,
+            toolName: result.toolName || toolCall.name,
             message: result.message || (result.success ? "Completed successfully" : result.error),
             // Only show diff for file operations, not full content
             diff: result.diff,
             added: result.added,
             removed: result.removed,
             filePath: result.filePath,
+            // Include additional fields for UI
+            content: result.content,
+            commandPreview: result.commandPreview,
+            riskLevel: result.riskLevel,
           },
         });
 
@@ -677,11 +913,13 @@ Working Directory: ${this.workingDirectory}`;
           tool_call_id: toolCallId,
         });
       } catch (error: any) {
-        const result = { success: false, error: error.message };
+        const result = { success: false, error: error.message, toolName: toolCall.name };
         this.sendMessage({
           type: "tool_result",
           tool: toolCall.name,
-          result: { success: false, message: error.message },
+          toolIndex: i,
+          totalTools: toolCalls.length,
+          result: { success: false, toolName: toolCall.name, message: error.message },
         });
 
         this.conversationHistory.push({

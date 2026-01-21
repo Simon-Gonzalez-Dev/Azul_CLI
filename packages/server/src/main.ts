@@ -11,6 +11,7 @@ import { Config } from "./types.js";
 import { Agent } from "./agent.js";
 import { render } from "ink";
 import React from "react";
+import { openInEditor, findAzulMdPath } from "./utils/editor.js";
 // Import from dist - TypeScript will use .d.ts files for type checking
 import { App } from "../../ui/dist/App.js";
 
@@ -268,6 +269,26 @@ async function main() {
     }
   };
 
+  // Handle /memory command - open AZUL.md in editor
+  const handleOpenMemory = async (): Promise<void> => {
+    const azulMdPath = await findAzulMdPath(workingDirectory);
+
+    if (!azulMdPath) {
+      enqueueMessage({
+        type: "system",
+        message: "No AZUL.md found. Use /init to create one.",
+      });
+      return;
+    }
+
+    const result = await openInEditor(azulMdPath);
+
+    enqueueMessage({
+      type: "system",
+      message: result.message,
+    });
+  };
+
   // Render UI with direct callbacks
   render(
     React.createElement(App, {
@@ -282,6 +303,7 @@ async function main() {
       onReset: handleReset,
       onChangeDirectory: handleChangeDirectory,
       onListDirectory: handleListDirectory,
+      onOpenMemory: handleOpenMemory,
     })
   );
 

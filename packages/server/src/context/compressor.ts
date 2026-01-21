@@ -7,8 +7,9 @@ import { ChatMessage } from "../types.js";
  * the model's context window limits.
  */
 
-// Approximate token estimation: ~4 characters per token (conservative)
-const CHARS_PER_TOKEN = 4;
+// Token estimation: ~3 characters per token is more accurate for code
+// (4 was too conservative, leading to premature compression)
+const CHARS_PER_TOKEN = 3;
 
 export interface ContextStats {
   estimatedTokens: number;
@@ -94,10 +95,12 @@ function compressToolOutput(content: string, toolName: string): string {
     // For file reads (view tool), summarize the content
     if (toolName === "view" && parsed.content) {
       const lines = parsed.content.split('\n').length;
-      const path = parsed.path || "file";
+      const path = parsed.filePath || parsed.path || "file";
       return JSON.stringify({
         success: parsed.success,
-        message: `[Compressed: Read ${lines} lines from ${path}]`,
+        toolName: "view",
+        message: `[Compressed: view - Read ${lines} lines from ${path}]`,
+        filePath: path,
         _compressed: true,
       });
     }
@@ -105,29 +108,34 @@ function compressToolOutput(content: string, toolName: string): string {
     // For ls tool, keep just the summary
     if (toolName === "ls" && parsed.content) {
       const itemCount = parsed.content.split('\n').length;
+      const path = parsed.filePath || parsed.path || "directory";
       return JSON.stringify({
         success: parsed.success,
-        message: `[Compressed: Listed ${itemCount} items in ${parsed.path || "directory"}]`,
+        toolName: "ls",
+        message: `[Compressed: ls - Listed ${itemCount} items in ${path}]`,
+        filePath: path,
         _compressed: true,
       });
     }
 
     // For grep tool, summarize matches
-    if (toolName === "grep" && parsed.matches) {
-      const matchCount = parsed.matches.length;
+    if (toolName === "grep" && (parsed.results || parsed.matches || parsed.matchCount)) {
+      const matchCount = parsed.matchCount || parsed.results?.length || parsed.matches?.length || 0;
       return JSON.stringify({
         success: parsed.success,
-        message: `[Compressed: Found ${matchCount} matches for pattern]`,
+        toolName: "grep",
+        message: `[Compressed: grep - Found ${matchCount} matches for "${parsed.pattern || 'pattern'}"]`,
         _compressed: true,
       });
     }
 
     // For bash tool, summarize output
-    if (toolName === "bash" && (parsed.stdout || parsed.stderr)) {
-      const hasOutput = (parsed.stdout?.length || 0) + (parsed.stderr?.length || 0);
+    if (toolName === "bash" && (parsed.stdout || parsed.stderr || parsed.content)) {
+      const hasOutput = (parsed.stdout?.length || 0) + (parsed.stderr?.length || 0) + (parsed.content?.length || 0);
       return JSON.stringify({
         success: parsed.success,
-        message: `[Compressed: Command executed, ${hasOutput} chars output]`,
+        toolName: "bash",
+        message: `[Compressed: bash - Command executed, ${hasOutput} chars output]`,
         _compressed: true,
       });
     }
@@ -136,17 +144,19 @@ function compressToolOutput(content: string, toolName: string): string {
     if ((toolName === "edit" || toolName === "write") && parsed.success) {
       return JSON.stringify({
         success: true,
-        message: parsed.message || `[Compressed: File operation completed]`,
+        toolName,
+        message: parsed.message || `[Compressed: ${toolName} - File operation completed]`,
         filePath: parsed.filePath,
         _compressed: true,
       });
     }
 
-    // Default: if content is too long, truncate
+    // Default: if content is too long, truncate but include toolName
     if (content.length > 500) {
       return JSON.stringify({
         success: parsed.success ?? true,
-        message: `[Compressed: Tool output truncated (${content.length} chars)]`,
+        toolName: toolName || parsed.toolName || "unknown",
+        message: `[Compressed: ${toolName} - Output truncated (${content.length} chars)]`,
         _compressed: true,
       });
     }

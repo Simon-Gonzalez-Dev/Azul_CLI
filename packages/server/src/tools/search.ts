@@ -72,13 +72,19 @@ export const grepTool: ToolDefinition = {
         if (!stats.isDirectory() && !stats.isFile()) {
           return {
             success: false,
+            toolName: "grep",
             error: `Path is not a file or directory: ${searchPath}`,
+            message: `Path is not a file or directory: ${searchPath}`,
+            filePath: searchPath,
           };
         }
       } catch {
         return {
           success: false,
+          toolName: "grep",
           error: `Path not found: ${searchPath}`,
+          message: `Path not found: ${searchPath}`,
+          filePath: searchPath,
         };
       }
       
@@ -141,20 +147,33 @@ export const grepTool: ToolDefinition = {
         };
       });
       
+      // Format results into content string for UI display
+      const content = parsedResults.map(r =>
+        `${r.file}:${r.line}: ${r.content}`
+      ).join('\n');
+
+      const message = parsedResults.length > 0
+        ? `Found ${lines.length} matches for "${args.pattern}"${truncated ? ` (showing first ${maxResults})` : ''}`
+        : `No matches found for "${args.pattern}"`;
+
       return {
         success: true,
+        toolName: "grep",
+        message,
+        content,
+        filePath: searchPath,
         results: parsedResults,
         rawResults: results,
-        count: results.length,
-        totalMatches: lines.length,
+        matchCount: lines.length,
         truncated,
         pattern: args.pattern,
-        searchPath,
       };
     } catch (error: any) {
       return {
         success: false,
+        toolName: "grep",
         error: error.message,
+        message: error.message,
         pattern: args.pattern,
       };
     }
