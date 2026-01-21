@@ -1,3 +1,28 @@
+// =============================================================================
+// INPUT & AGENT MODES
+// =============================================================================
+
+/** Input mode based on prefix character */
+export type InputMode = 'chat' | 'bash' | 'command';
+
+/** Agent execution mode (toggled with Shift+Tab) */
+export type AgentMode = 'normal' | 'plan';
+
+/** Plan step for plan mode */
+export interface PlanStep {
+  id: string;
+  description: string;
+  toolName?: string;
+  toolArgs?: Record<string, any>;
+  status: 'pending' | 'approved' | 'executing' | 'completed' | 'failed';
+  result?: string;
+  error?: string;
+}
+
+// =============================================================================
+// MESSAGES
+// =============================================================================
+
 export interface Message {
   type: string;
   content?: string;
@@ -5,15 +30,28 @@ export interface Message {
   [key: string]: any;
 }
 
+// =============================================================================
+// APP STATE
+// =============================================================================
+
 export interface AppState {
   messages: Message[];
   connected: boolean;
   userInput: string;
   pendingApproval: ApprovalRequest | null;
   tokenStats: TokenStats;
-  providerStatusApi?: ProviderStatusMessage;
-  providerStatusLocal?: ProviderStatusMessage;
+  providerStatus?: ProviderStatusMessage;
+  contextStats?: ContextStats;
+  // New mode-related state
+  inputMode: InputMode;
+  agentMode: AgentMode;
+  planSteps: PlanStep[] | null;
+  pendingPlan: boolean;  // True when waiting for plan approval
 }
+
+// =============================================================================
+// APPROVAL & PERMISSIONS
+// =============================================================================
 
 export interface ApprovalRequest {
   requestId: string;
@@ -23,6 +61,10 @@ export interface ApprovalRequest {
   added?: number;
   removed?: number;
 }
+
+// =============================================================================
+// TOKEN & CONTEXT STATS
+// =============================================================================
 
 export interface TokenStats {
   inputTokens: number;
@@ -39,12 +81,44 @@ export interface TokenStats {
   totalOutputTokens?: number;
 }
 
-export interface ProviderStatusMessage {
-  mode: "local" | "api";
-  provider: string;
-  model: string;
-  fallback?: boolean;
-  reason?: string;
-  previousProvider?: string;
+export interface ContextStats {
+  estimatedTokens: number;
+  maxTokens: number;
+  usagePercent: number;
+  messageCount: number;
+  compressedCount: number;
 }
 
+// =============================================================================
+// PROVIDER STATUS
+// =============================================================================
+
+export interface ProviderStatusMessage {
+  provider: string;
+  model: string;
+}
+
+// =============================================================================
+// COMMANDS
+// =============================================================================
+
+export interface Command {
+  name: string;
+  description: string;
+  shortcut?: string;
+}
+
+/** Available slash commands */
+export const COMMANDS: Command[] = [
+  { name: "help", description: "Show available commands" },
+  { name: "reset", description: "Reset agent memory/context" },
+  { name: "clear", description: "Clear the screen" },
+  { name: "cd", description: "Change directory (e.g., /cd /path)" },
+  { name: "ls", description: "List directory contents" },
+  { name: "plan", description: "Toggle plan mode", shortcut: "Shift+Tab" },
+  { name: "config", description: "Show configuration" },
+  { name: "quit", description: "Exit the application" },
+];
+
+/** Recent bash commands (maintained at runtime) */
+export const RECENT_BASH_COMMANDS: string[] = [];

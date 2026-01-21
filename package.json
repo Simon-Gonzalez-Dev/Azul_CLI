@@ -10,10 +10,13 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -ws",
-    "build:global": "cd packages/server && npm run build && cd ../ui && npm run build",
+    "build": "npm run build --workspaces",
+    "build:global": "npm run build -w @azul/ui && npm run build -w @azul/server",
     "dev": "npm run build && node packages/server/dist/main.js",
+    "watch": "npm run watch --workspaces --if-present",
+    "start": "node packages/server/dist/main.js",
     "clean": "rm -rf packages/*/dist",
+    "rebuild": "rm -rf packages/*/dist && npm run build --workspaces",
     "install:global": "npm run build:global && npm install -g ."
   },
   "keywords": [
@@ -33,7 +36,6 @@
     "config.json"
   ],
   "dependencies": {
-    "dotenv": "^17.2.3",
     "ink": "^4.4.1",
     "node-llama-cpp": "^3.0.0",
     "react": "^18.2.0"
@@ -44,4 +46,3 @@
     "typescript": "^5.3.3"
   }
 }
-

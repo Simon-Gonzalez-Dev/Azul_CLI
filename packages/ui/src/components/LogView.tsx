@@ -1,13 +1,14 @@
 import React from "react";
 import { Box, Text } from "ink";
-import { Message, ProviderStatusMessage } from "../types.js";
+import { Message, ProviderStatusMessage, AgentMode, PlanStep } from "../types.js";
 import { DiffView } from "./DiffView.js";
 
 interface LogViewProps {
   messages: Message[];
+  agentMode?: AgentMode;
 }
 
-export const LogView: React.FC<LogViewProps> = ({ messages }) => {
+export const LogView: React.FC<LogViewProps> = ({ messages, agentMode = 'normal' }) => {
   // Generate stable keys for messages - optimized for performance
   const getMessageKey = (message: Message, index: number): string => {
     // Use streamId if available (for streaming messages), otherwise fallback
@@ -40,6 +41,72 @@ export const LogView: React.FC<LogViewProps> = ({ messages }) => {
           </Box>
         );
 
+      case "user_message":
+        // New user message format with agent mode indicator
+        const userAgentMode = (message as any).agentMode || 'normal';
+        return (
+          <Box key={messageKey} marginY={0} flexDirection="column">
+            <Box>
+              <Text color="cyan" bold>You</Text>
+              {userAgentMode === 'plan' && (
+                <Text color="magenta"> [plan]</Text>
+              )}
+              <Text dimColor> ({time})</Text>
+            </Box>
+            <Box paddingLeft={1}>
+              <Text>{message.content}</Text>
+            </Box>
+          </Box>
+        );
+
+      case "user_bash":
+        // Direct bash command from user ($ prefix)
+        return (
+          <Box key={messageKey} marginY={0} flexDirection="column">
+            <Text color="green" bold>$ {(message as any).command}</Text>
+          </Box>
+        );
+
+      case "bash_result":
+        // Result from direct bash execution
+        const bashResult = message as any;
+        return (
+          <Box key={messageKey} marginY={0} flexDirection="column">
+            {bashResult.stdout && (
+              <Box paddingLeft={1}>
+                <Text>{bashResult.stdout}</Text>
+              </Box>
+            )}
+            {bashResult.stderr && (
+              <Box paddingLeft={1}>
+                <Text color="red">{bashResult.stderr}</Text>
+              </Box>
+            )}
+            {!bashResult.success && (
+              <Text color="red">Command failed</Text>
+            )}
+          </Box>
+        );
+
+      case "plan_received":
+        // Plan mode: show received plan steps
+        const planSteps: PlanStep[] = (message as any).steps || [];
+        return (
+          <Box key={messageKey} marginY={0} flexDirection="column" borderStyle="single" borderColor="magenta" paddingX={1}>
+            <Text color="magenta" bold>Plan Received:</Text>
+            {planSteps.map((step, idx) => (
+              <Box key={step.id} paddingLeft={1}>
+                <Text color="white">
+                  {idx + 1}. {step.description}
+                </Text>
+                {step.toolName && (
+                  <Text dimColor> ({step.toolName})</Text>
+                )}
+              </Box>
+            ))}
+            <Text dimColor>Review and approve in the overlay below.</Text>
+          </Box>
+        );
 
       case "tool_call":
         // Silent Actor pattern: Show minimal status, not full details
@@ -147,37 +214,46 @@ export const LogView: React.FC<LogViewProps> = ({ messages }) => {
           <Box key={messageKey} marginY={0} flexDirection="column">
             {displayThought && (
               <Box marginBottom={(displayContent || toolCalls.length > 0) ? 1 : 0} flexDirection="column">
-                <Text color="magenta" bold>
-                  Azul (thinking):
-                </Text>
-                <Text dimColor>{displayThought}</Text>
+                <Box>
+                  <Text color="magenta" bold>Azul</Text>
+                  <Text dimColor> (thinking...)</Text>
+                </Box>
+                <Box paddingLeft={1}>
+                  <Text dimColor italic>{displayThought}</Text>
+                </Box>
               </Box>
             )}
             {toolCalls.length > 0 && (
               <Box marginBottom={displayContent ? 1 : 0} flexDirection="column">
-                <Text color="blue" bold>
-                  Tools detected:
-                </Text>
                 {toolCalls.map((tc: any, idx: number) => (
-                  <Text key={idx} color="blue" dimColor>
-                    - {tc.name}
-                  </Text>
+                  <Box key={idx}>
+                    <Text color="blue">→ </Text>
+                    <Text color="blue" dimColor>Running {tc.name}...</Text>
+                  </Box>
                 ))}
               </Box>
             )}
             {displayContent && (
               <Box flexDirection="column">
-                <Text color="green" bold>
-                  {isStreaming ? "Azul (streaming...)" : `Azul (${time}):`}
-                </Text>
-                <Text>{displayContent}</Text>
-                {isStreaming && (
-                  <Text color="cyan" dimColor>|</Text>
-                )}
+                <Box>
+                  <Text color="cyanBright" bold>Azul</Text>
+                  {isStreaming ? (
+                    <Text dimColor> (streaming...)</Text>
+                  ) : (
+                    <Text dimColor> ({time})</Text>
+                  )}
+                </Box>
+                <Box paddingLeft={1}>
+                  <Text>{displayContent}</Text>
+                  {isStreaming && (
+                    <Text color="cyan">▌</Text>
+                  )}
+                </Box>
               </Box>
             )}
             {streamState === "tools_executing" && (
               <Box marginTop={1}>
+                <Text color="yellow">⚙ </Text>
                 <Text color="yellow" dimColor>Executing tools...</Text>
               </Box>
             )}
@@ -257,15 +333,10 @@ export const LogView: React.FC<LogViewProps> = ({ messages }) => {
       case "provider_status":
         const status: ProviderStatusMessage = message.status;
         return (
-          <Box key={messageKey} marginY={0} flexDirection="column">
-            <Text color={status.mode === "api" ? "yellow" : "cyan"}>
-              {status.fallback
-                ? `Fallback to ${status.provider}${status.model ? ` (${status.model})` : ""}`
-                : `Active provider: ${status.provider}${status.model ? ` (${status.model})` : ""}`}
+          <Box key={messageKey} marginY={0}>
+            <Text color="cyan">
+              Active provider: {status.provider}{status.model ? ` (${status.model})` : ""}
             </Text>
-            {status.fallback && status.reason && (
-              <Text dimColor>Reason: {status.reason}</Text>
-            )}
           </Box>
         );
 

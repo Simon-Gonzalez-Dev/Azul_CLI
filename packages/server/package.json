@@ -9,10 +9,11 @@
   },
   "scripts": {
     "build": "tsc",
-    "dev": "tsc && node dist/main.js"
+    "watch": "tsc --watch",
+    "dev": "tsc && node dist/main.js",
+    "start": "node dist/main.js"
   },
   "dependencies": {
-    "dotenv": "^17.2.3",
     "ink": "^4.4.1",
     "node-llama-cpp": "^3.0.0",
     "react": "^18.2.0"

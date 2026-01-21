@@ -1,13 +1,56 @@
 import * as fs from "fs/promises";
+import * as path from "path";
 import { ILLMService } from "./llm-interface.js";
 import { ChatMessage, ToolCall, ToolDefinition } from "./types.js";
 import { tools, getToolByName } from "./tools/index.js";
 import { computeDiff } from "./tools/filesystem.js";
+import {
+  compressConversation,
+  getContextStats,
+  CompressionConfig,
+  DEFAULT_CONFIG,
+} from "./context/compressor.js";
 
 export type MessageCallback = (message: {
   type: string;
   [key: string]: any;
 }) => void;
+
+// AZUL.md content loaded at startup
+let azulMdContent: string | null = null;
+
+/**
+ * Load AZUL.md from the working directory or parent directories
+ * Search order: {cwd}/AZUL.md, {cwd}/.azul/AZUL.md, parent dirs
+ */
+async function loadAzulMd(workingDir: string): Promise<string | null> {
+  const searchPaths = [
+    path.join(workingDir, "AZUL.md"),
+    path.join(workingDir, ".azul", "AZUL.md"),
+  ];
+
+  // Also check parent directories (for monorepos)
+  let currentDir = workingDir;
+  for (let i = 0; i < 3; i++) {
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) break;
+    searchPaths.push(path.join(parentDir, "AZUL.md"));
+    searchPaths.push(path.join(parentDir, ".azul", "AZUL.md"));
+    currentDir = parentDir;
+  }
+
+  for (const searchPath of searchPaths) {
+    try {
+      const content = await fs.readFile(searchPath, "utf-8");
+      console.log(`Loaded project instructions from: ${searchPath}`);
+      return content;
+    } catch {
+      // File not found, continue searching
+    }
+  }
+
+  return null;
+}
 
 export class Agent {
   private llm: ILLMService;
@@ -17,11 +60,23 @@ export class Agent {
   private pendingApprovals: Map<string, { resolve: (approved: boolean) => void }> = new Map();
   private streamingResponse: string = "";
   private workingDirectory: string;
+  private compressionConfig: CompressionConfig;
 
-  constructor(sendMessage: MessageCallback, llm: ILLMService, workingDirectory?: string) {
+  constructor(sendMessage: MessageCallback, llm: ILLMService, workingDirectory?: string, contextSize?: number) {
     this.sendMessage = sendMessage;
     this.llm = llm;
     this.workingDirectory = workingDirectory || process.cwd();
+    // Configure compression based on context size
+    this.compressionConfig = {
+      ...DEFAULT_CONFIG,
+      maxContextTokens: contextSize || DEFAULT_CONFIG.maxContextTokens,
+    };
+    this.initializeSystemPrompt();
+  }
+
+  async initialize(): Promise<void> {
+    // Load AZUL.md on initialization
+    azulMdContent = await loadAzulMd(this.workingDirectory);
     this.initializeSystemPrompt();
   }
 
@@ -29,8 +84,11 @@ export class Agent {
     this.llm = llm;
   }
 
-  setWorkingDirectory(dir: string): void {
+  async setWorkingDirectory(dir: string): Promise<void> {
     this.workingDirectory = dir;
+    // Reload AZUL.md when directory changes
+    azulMdContent = await loadAzulMd(dir);
+    this.initializeSystemPrompt();
   }
 
   getWorkingDirectory(): string {
@@ -38,79 +96,94 @@ export class Agent {
   }
 
   private initializeSystemPrompt(): void {
+    // Build AZUL.md section if available
+    const azulMdSection = azulMdContent
+      ? `\n\n## PROJECT INSTRUCTIONS (from AZUL.md)\n\n${azulMdContent}`
+      : "";
+
     this.systemPrompt = `# ROLE: Azul - Autonomous Coding Agent
 
-You are Azul, an elite autonomous coding agent with direct filesystem and CLI access. Your purpose is to complete programming tasks autonomously, efficiently, and accurately.
+You are Azul, an autonomous coding agent with direct filesystem and shell access. Complete tasks autonomously using your tools.
 
-## CORE IDENTITY PRINCIPLES
+## CORE PRINCIPLES
 
-**Principle 1: Autonomous Action**
-- You have full access to tools. Never claim you "cannot see" or "don't have access"
+**1. Autonomous Action**
+- You have FULL access to tools. Never claim you "cannot see" or "don't have access"
 - When information is missing, use tools to discover it yourself
 - Only ask users for clarification when multiple valid interpretations exist
 
-**Principle 2: Silent Execution**
-- Actions speak louder than words. Execute tools instead of describing actions
+**2. Silent Execution**
+- Execute actions instead of describing them
 - Never show code in chat that you're about to write to a file
 - Avoid meta-commentary like "I will now..." or "Here's the code:"
 
-**Principle 3: Exploration Before Assumption**
+**3. Explore Before Assume**
 - Never guess file paths, structures, or contents
-- Always verify context using list_dir and read_file before making changes
-- Map the codebase territory before acting
+- Always verify using ls and view before making changes
+- Map the codebase before acting
 
-**Principle 4: Surgical Precision**
-- Prefer edit_file (search & replace) over write_file for existing files
-- Use write_file only for new files or very small files (<50 lines)
-- Match search blocks EXACTLY including whitespace and indentation
-
----
-
-# OPERATIONAL PROTOCOLS
-
-## Protocol A: Ambiguity Resolution
-
-When user requests are vague (e.g., "fix the bug", "update the HTML", "refactor this"):
-1. Execute list_dir with path "." to discover the codebase structure
-2. Identify relevant files based on context clues
-3. Read candidate files using read_file
-4. Proceed with the task using discovered context
-5. Only request clarification if multiple conflicting candidates exist (>3 similar files)
-
-## Protocol B: Error Recovery
-
-When a tool fails:
-1. Read the error message carefully
-2. Analyze root cause (path issues, syntax errors, missing dependencies)
-3. Self-correct by fixing the issue and retrying
-4. If stuck after 2 attempts, explain the blocker in <thought> tags
-
-## Protocol C: Verification
-
-After making code changes, run linters/formatters/build commands via execute_command and verify changes work.
+**4. Smart Editing**
+- Prefer edit over write for existing files
+- Use write only for NEW files or very small files (<50 lines)
+- For edit: Use unique identifiers (function names, class names), NOT line numbers
+- Include 2-3 lines of context for better matching
 
 ---
 
-# BEHAVIORAL CONSTRAINTS
+## TOOLS
 
-**MUST Do:**
-- Use tools to discover information yourself
+You have these tools available:
+
+| Tool | Purpose | Requires Approval |
+|------|---------|-------------------|
+| ls | List directory contents (filters .git, node_modules) | No |
+| view | Read file with line numbers | No |
+| edit | Edit file via search/replace (use code blocks, not line numbers) | Yes |
+| write | Create new files | Yes |
+| bash | Execute shell commands (sandboxed) | Yes |
+| grep | Search for patterns in files | No |
+
+---
+
+## OUTPUT FORMAT
+
+**CRITICAL: You MUST use XML tags for ALL output.**
+
+<thought>
+Your reasoning about the task. What you observe, what you plan to do.
+</thought>
+
+<tool_code>
+<tool_name>view</tool_name>
+<parameters>
+<path>./src/main.ts</path>
+</parameters>
+</tool_code>
+
+You can include multiple <tool_code> blocks if needed.
+
+---
+
+## BEHAVIORAL RULES
+
+**MUST DO:**
+- Use tools to discover information
 - Execute actions instead of describing them
-- Verify changes after making them
-- Use edit_file for existing files (write_file only for new files <50 lines)
-- Put all reasoning in <thought> tags
-- Put all tool calls in <tool_code> tags
+- Verify changes work (run tests, build, etc.)
+- Put reasoning in <thought> tags
+- Put tool calls in <tool_code> tags
 
-**MUST NOT Do:**
-- Claim you don't have access (you have tools)
-- Ask users for file paths when you can discover them
-- Show code in chat before writing it to files
-- Use write_file on existing files
+**MUST NOT:**
+- Claim you don't have access (you have tools!)
+- Ask for file paths when you can use ls to find them
+- Show code in chat before writing to files
+- Use write on existing files (use edit)
+- Use line numbers for editing (use unique code blocks)
 - Output text outside XML tags
-- Use markdown formatting
-- Describe actions instead of executing them
+${azulMdSection}
 
-Remember: You are an autonomous agent. Act first, explain if necessary. Tools are your superpower—use them.`;
+## ENVIRONMENT
+Working Directory: ${this.workingDirectory}`;
   }
 
   async handleUserMessage(content: string): Promise<void> {
@@ -130,7 +203,7 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
   reset(): void {
     this.conversationHistory = [];
     this.llm.resetTokenStats();
-    
+
     this.pendingApprovals.forEach((pending) => {
       pending.resolve(false);
     });
@@ -143,28 +216,28 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
       type StreamState = "idle" | "streaming" | "complete" | "tools_executing" | "done";
       let streamState: StreamState = "idle";
       const streamId = `stream_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      
+
       this.streamingResponse = "";
       let lastParsedThought = "";
       let parsedToolCalls: ToolCall[] = [];
       let lastStreamUpdate = 0;
       const STREAM_UPDATE_THROTTLE_MS = 16; // ~60fps max update rate
-      
+
       // Real-time XML parser for streaming - enhanced to parse tool calls
-      const parseStreamingContent = (content: string): { 
-        thought?: string; 
+      const parseStreamingContent = (content: string): {
+        thought?: string;
         toolCalls: ToolCall[];
         rawContent: string;
       } => {
         // Extract thought tag content (even if incomplete)
         const thoughtMatch = content.match(/<thought>([\s\S]*?)(?:<\/thought>|$)/i);
         const thought = thoughtMatch ? thoughtMatch[1].trim() : undefined;
-        
+
         // Parse complete tool_code blocks in real-time
         const toolCalls: ToolCall[] = [];
         const toolCodeRegex = /<tool_code>([\s\S]*?)<\/tool_code>/gi;
         let match;
-        
+
         while ((match = toolCodeRegex.exec(content)) !== null) {
           const toolBlock = match[1];
           const parsed = this.parseToolBlock(toolBlock);
@@ -172,38 +245,38 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
             toolCalls.push(parsed);
           }
         }
-        
+
         return { thought, toolCalls, rawContent: content };
       };
 
       // Unified stream handler - single message type, always active
       const handleStream = (accumulatedText: string) => {
         this.streamingResponse = accumulatedText;
-        
+
         // Throttle updates for performance (but ensure we always get final update)
         const now = Date.now();
         const shouldUpdate = (now - lastStreamUpdate) >= STREAM_UPDATE_THROTTLE_MS;
-        
+
         if (!shouldUpdate && streamState !== "complete") {
           return; // Skip this update, will catch up on next
         }
-        
+
         lastStreamUpdate = now;
         streamState = "streaming";
-        
+
         // Parse streaming content in real-time
         const parsed = parseStreamingContent(accumulatedText);
-        
+
         // Update thought if it changed
         if (parsed.thought && parsed.thought !== lastParsedThought) {
           lastParsedThought = parsed.thought;
         }
-        
+
         // Track new tool calls
         if (parsed.toolCalls.length > parsedToolCalls.length) {
           parsedToolCalls = parsed.toolCalls;
         }
-        
+
         // Send unified streaming message (only if we have content to show)
         const hasContent = parsed.thought || parsed.rawContent.trim() || parsedToolCalls.length > 0;
         if (hasContent) {
@@ -219,9 +292,28 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
         }
       };
 
-      const { response, toolCalls, stats } = await this.llm.getCompletion(
+      // Compress conversation if needed to stay within context window
+      const compressedHistory = compressConversation(
         this.systemPrompt,
         this.conversationHistory,
+        this.compressionConfig
+      );
+
+      // Get and send context stats to UI
+      const contextStats = getContextStats(
+        this.systemPrompt,
+        compressedHistory,
+        this.compressionConfig
+      );
+      this.sendMessage({
+        type: "context_stats",
+        stats: contextStats,
+      });
+
+      // Use compressed history for LLM call
+      const { response, toolCalls, stats } = await this.llm.getCompletion(
+        this.systemPrompt,
+        compressedHistory,
         tools,
         handleStream
       );
@@ -229,15 +321,15 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
       // Finalize streaming - parse final content
       const finalContent = response || this.streamingResponse || "";
       streamState = "complete";
-      
+
       const totalStats = this.llm.getTokenStats();
       const finalParsed = parseStreamingContent(finalContent);
-      
+
       // Update parsed tool calls with final parse
       if (finalParsed.toolCalls.length > 0) {
         parsedToolCalls = finalParsed.toolCalls;
       }
-      
+
       // Send final unified stream message with completion
       this.sendMessage({
         type: "agent_stream",
@@ -268,7 +360,7 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
           content: parsedResponse.thought || "I'll use tools to complete this task.",
           tool_calls: parsedResponse.tool_calls,
         });
-        
+
         // Update stream state to show tools executing
         this.sendMessage({
           type: "agent_stream",
@@ -279,15 +371,15 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
           toolCalls: parsedResponse.tool_calls,
           isComplete: true,
         });
-        
+
         await this.executeToolCalls(parsedResponse.tool_calls);
-        
+
         // Mark as done after tools execute
         streamState = "done";
         await this.runAgentLoop();
         return;
       }
-      
+
       // If no tool calls but we have thought, treat as final response
       if (parsedResponse.thought && (!parsedResponse.tool_calls || parsedResponse.tool_calls.length === 0)) {
           streamState = "done";
@@ -303,11 +395,11 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
       if (!parsedResponse.thought && !parsedResponse.tool_calls) {
          const textContent = parsedResponse.response || finalContent || "";
          let retryCount = 0;
-         
+
          // Limit retries to prevent infinite loops
          const retryKey = "xml_parse_retry_count";
          const currentRetryCount = (this.conversationHistory[this.conversationHistory.length - 1] as any)?.[retryKey] || 0;
-         
+
          if (currentRetryCount >= 2) {
            // Max retries reached - show error and stop
            streamState = "done";
@@ -317,7 +409,7 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
            });
            return;
          }
-         
+
          // If it looks like it TRIED to use tools but failed XML?
          if (textContent.includes("<tool_code>") || textContent.includes("<thought>")) {
              // Incomplete XML - ask model to retry with proper format
@@ -347,7 +439,7 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
          streamState = "done";
          return;
       }
-      
+
       // Mark as done
       streamState = "done";
 
@@ -392,7 +484,7 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
       // First, try to find complete <tool_code>...</tool_code> blocks
       const toolCodeRegex = /<tool_code>([\s\S]*?)<\/tool_code>/gi;
       let match;
-      
+
       while ((match = toolCodeRegex.exec(response)) !== null) {
         const toolBlock = match[1];
         const parsed = this.parseToolBlock(toolBlock);
@@ -408,7 +500,7 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
         // Check if we already parsed this in the complete regex above
         const lastCompleteIndex = response.lastIndexOf('</tool_code>');
         const lastOpeningIndex = response.lastIndexOf('<tool_code>');
-        
+
         // If the last opening is after the last closing, we have an incomplete tag
         if (lastOpeningIndex > lastCompleteIndex) {
           const incompleteBlock = response.substring(lastOpeningIndex + '<tool_code>'.length);
@@ -473,23 +565,23 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
     if (!nameMatch) {
       return null;
     }
-    
+
     const toolName = nameMatch[1].trim();
     if (!toolName) {
       return null;
     }
-    
+
     // Extract parameters block (handle incomplete tags)
     const paramsMatch = toolBlock.match(/<parameters>([\s\S]*?)(?:<\/parameters>|$)/i);
     const args: any = {};
-    
+
     if (paramsMatch) {
       const paramsContent = paramsMatch[1];
       // Regex to find all tags inside parameters
       // Match <key>value</key> or <key>value (if incomplete)
       const paramRegex = /<([^>]+)>([\s\S]*?)(?:<\/\1>|$)/gi;
       let paramMatch;
-      
+
       while ((paramMatch = paramRegex.exec(paramsContent)) !== null) {
         const key = paramMatch[1].trim();
         const value = paramMatch[2].trim();
@@ -508,16 +600,16 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
   private async executeToolCalls(toolCalls: ToolCall[]): Promise<void> {
     for (const toolCall of toolCalls) {
       const tool = getToolByName(toolCall.name);
-      
+
       // Generate unique ID for tool call if not provided
       const toolCallId = toolCall.id || `call_${Math.random().toString(36).substring(2, 15)}`;
-      
+
       if (!tool) {
         this.sendMessage({
           type: "error",
           message: `Unknown tool: ${toolCall.name}`,
         });
-        
+
         this.conversationHistory.push({
           role: "tool",
           content: JSON.stringify({ success: false, error: `Unknown tool: ${toolCall.name}` }),
@@ -541,7 +633,7 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
 
       if (tool.requiresApproval) {
         const approved = await this.requestApproval(toolCall.name, toolCall.arguments);
-        
+
         if (!approved) {
           const result = { success: false, error: "User denied approval" };
           this.sendMessage({
@@ -549,7 +641,7 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
             tool: toolCall.name,
             result: { success: false, message: "User denied approval" }, // Minimal result
           });
-          
+
           this.conversationHistory.push({
             role: "tool",
             content: JSON.stringify(result),
@@ -562,7 +654,7 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
       try {
         // Pass context to tool execution
         const result = await tool.execute(toolCall.arguments, toolContext);
-        
+
         // Show minimal result (Silent Actor pattern)
         this.sendMessage({
           type: "tool_result",
@@ -603,11 +695,12 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
 
   private async requestApproval(toolName: string, args: any): Promise<boolean> {
     const requestId = Math.random().toString(36).substring(7);
-    
+
     let diffData: { diff: string; added: number; removed: number } | undefined;
 
     // Interactive Diff: Compute diff for file modifications
-    if (toolName === "edit_file" || toolName === "write_file") {
+    // Updated to use new tool names: edit, write
+    if (toolName === "edit" || toolName === "write") {
       try {
         let oldContent = "";
         let newContent = "";
@@ -617,32 +710,30 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
         try {
           oldContent = await fs.readFile(filePath, "utf-8");
         } catch {
-          // File doesn't exist (for write_file this is creation)
+          // File doesn't exist (for write this is creation)
           oldContent = "";
         }
 
-        if (toolName === "edit_file") {
-          // For edit_file, we need to simulate the replacement
-          const search = args.search;
-          const replace = args.replace;
-          
+        if (toolName === "edit") {
+          // For edit, we need to simulate the replacement
+          const search = args.old_string;
+          const replace = args.new_string;
+
           // Normalizing line endings
           const normalizedContent = oldContent.replace(/\r\n/g, '\n');
-          const normalizedSearch = search.replace(/\r\n/g, '\n');
-          
+          const normalizedSearch = search?.replace(/\r\n/g, '\n') || "";
+
           if (normalizedContent.includes(normalizedSearch)) {
             // We compute the diff of the *change* specifically
-            // Or we could compute the diff of the whole file. 
-            // For surgical edits, diffing the search/replace block is cleaner.
-            diffData = computeDiff(normalizedSearch, replace);
+            diffData = computeDiff(normalizedSearch, replace || "");
           } else {
             // If search block not found, we can't show a valid diff, but we can warn
             diffData = { diff: "⚠️  Search block not found in file. Tool execution will fail.", added: 0, removed: 0 };
           }
-        } else if (toolName === "write_file") {
-          // For write_file, we compare old content vs new content
+        } else if (toolName === "write") {
+          // For write, we compare old content vs new content
           // Clean content from markdown if needed (simple check)
-          let content = args.content;
+          let content = args.content || "";
           if (content.startsWith("```")) {
              // Simple extraction if the agent still output markdown
              const match = content.match(/^```[\w]*\n([\s\S]*?)\n```$/);
@@ -657,7 +748,7 @@ Remember: You are an autonomous agent. Act first, explain if necessary. Tools ar
 
     return new Promise((resolve) => {
       this.pendingApprovals.set(requestId, { resolve });
-      
+
       this.sendMessage({
         type: "approval_request",
         requestId,

@@ -63,6 +63,7 @@ coverage/
 
 # IDE and editor files
 .vscode/
+CLAUDE.md
 .idea/
 *.swp
 *.swo

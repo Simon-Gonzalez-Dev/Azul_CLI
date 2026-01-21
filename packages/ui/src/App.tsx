@@ -1,24 +1,46 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Box } from "ink";
 import { LogView } from "./components/LogView.js";
 import { UserInput } from "./components/UserInput.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { PermissionModal } from "./components/PermissionModal.js";
 import { Banner } from "./components/Banner.js";
-import { Message, AppState, ApprovalRequest, ProviderStatusMessage } from "./types.js";
+import { PlanModeOverlay } from "./components/PlanModeOverlay.js";
+import {
+  Message,
+  AppState,
+  ApprovalRequest,
+  ProviderStatusMessage,
+  ContextStats,
+  AgentMode,
+  InputMode,
+  PlanStep,
+  RECENT_BASH_COMMANDS,
+} from "./types.js";
 
 export interface AppProps {
-  onUserInput: (text: string) => void;
+  onUserInput: (text: string, agentMode?: AgentMode) => void;
   onApproval: (requestId: string, approved: boolean) => void;
   onMessage: (handler: (message: any) => void) => void;
   onReset: () => void;
-  onSwitchMode: (mode: "local" | "api") => void;
   onChangeDirectory: (path: string) => void;
   onListDirectory: (path?: string) => void;
-  currentMode?: "local" | "api";
+  onBashCommand?: (command: string) => void;
+  onExecutePlan?: (planId: string) => void;
+  onCancelPlan?: () => void;
 }
 
-export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, onReset, onSwitchMode, onChangeDirectory, onListDirectory, currentMode = "local" }) => {
+export const App: React.FC<AppProps> = ({
+  onUserInput,
+  onApproval,
+  onMessage,
+  onReset,
+  onChangeDirectory,
+  onListDirectory,
+  onBashCommand,
+  onExecutePlan,
+  onCancelPlan,
+}) => {
   const [state, setState] = useState<AppState>({
     messages: [],
     connected: true,
@@ -33,15 +55,17 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
       totalInputTokens: 0,
       totalOutputTokens: 0,
     },
-    providerStatusApi: undefined,
-    providerStatusLocal: undefined,
+    providerStatus: undefined,
+    contextStats: undefined,
+    // New mode state
+    inputMode: 'chat',
+    agentMode: 'normal',
+    planSteps: null,
+    pendingPlan: false,
   });
 
-  const [mode, setMode] = useState<"local" | "api">(currentMode);
-
   useEffect(() => {
-    // Clear all messages on mount - start fresh with only banner
-    // This ensures clean state even if component remounts
+    // Clear all messages on mount - start fresh
     setState((prev) => ({
       ...prev,
       messages: [],
@@ -60,8 +84,49 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
     onMessage((message: any) => {
       handleServerMessage(message);
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // onMessage is stable, handleServerMessage is defined in component
+  }, []);
+
+  // Toggle agent mode (Normal <-> Plan)
+  const toggleAgentMode = useCallback(() => {
+    setState((prev) => {
+      const newMode: AgentMode = prev.agentMode === 'normal' ? 'plan' : 'normal';
+
+      // Show system message about mode change
+      const modeMessage: Message = {
+        type: "system",
+        message: newMode === 'plan'
+          ? "Switched to PLAN mode. Agent will show plans before executing."
+          : "Switched to NORMAL mode. Agent will execute immediately.",
+        timestamp: Date.now(),
+      };
+
+      return {
+        ...prev,
+        agentMode: newMode,
+        messages: [...prev.messages, modeMessage],
+        // Clear pending plan when switching modes
+        planSteps: newMode === 'normal' ? null : prev.planSteps,
+        pendingPlan: false,
+      };
+    });
+  }, []);
+
+  // Update input mode based on text
+  const updateInputMode = useCallback((text: string) => {
+    let newMode: InputMode = 'chat';
+    if (text.startsWith('$')) {
+      newMode = 'bash';
+    } else if (text.startsWith('/')) {
+      newMode = 'command';
+    }
+
+    setState((prev) => {
+      if (prev.inputMode !== newMode) {
+        return { ...prev, inputMode: newMode };
+      }
+      return prev;
+    });
+  }, []);
 
   const handleServerMessage = (message: any) => {
     if (message.type === "approval_request") {
@@ -91,12 +156,12 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
         ],
       }));
     } else if (message.type === "agent_stream") {
-      // Unified streaming message handler - single source of truth
+      // Unified streaming message handler
       setState((prev) => {
         const streamId = message.streamId;
         const newMessages = [...prev.messages];
-        
-        // Find existing stream by streamId (O(1) lookup potential with map, but array is fine for now)
+
+        // Find existing stream by streamId
         let streamingIndex = -1;
         for (let i = newMessages.length - 1; i >= 0; i--) {
           if (newMessages[i].type === "agent_stream" && newMessages[i].streamId === streamId) {
@@ -105,10 +170,10 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
           }
         }
 
-        // Don't add empty streams (filter in state management, not render)
+        // Don't add empty streams
         const hasContent = message.thought || (message.content && message.content.trim()) || (message.toolCalls && message.toolCalls.length > 0);
         if (!hasContent && !message.isComplete) {
-          return prev; // Skip empty non-complete streams
+          return prev;
         }
 
         if (streamingIndex >= 0) {
@@ -134,30 +199,62 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
 
         return { ...prev, ...updatedState };
       });
-    } else if (message.type === "token_stats") {
-      // Token stats can come separately or integrated in stream
-      const timestamp = Date.now();
+    } else if (message.type === "plan_response") {
+      // Handle plan mode response from agent
       setState((prev) => ({
         ...prev,
-        tokenStats: message.stats,
+        planSteps: message.steps || [],
+        pendingPlan: true,
         messages: [
-          ...prev.messages.filter((m) => m.type !== "token_stats"),
+          ...prev.messages,
           {
-            type: "token_stats",
-            stats: message.stats,
-            timestamp,
+            type: "plan_received",
+            steps: message.steps,
+            timestamp: Date.now(),
           },
         ],
       }));
-    } else if (message.type === "mode_changed") {
-      setMode(message.mode);
+    } else if (message.type === "plan_step_update") {
+      // Update a specific plan step status
+      setState((prev) => {
+        if (!prev.planSteps) return prev;
+
+        const updatedSteps = prev.planSteps.map((step) =>
+          step.id === message.stepId
+            ? { ...step, status: message.status, result: message.result, error: message.error }
+            : step
+        );
+
+        return { ...prev, planSteps: updatedSteps };
+      });
+    } else if (message.type === "plan_complete") {
+      // Plan execution finished
+      setState((prev) => ({
+        ...prev,
+        pendingPlan: false,
+        messages: [
+          ...prev.messages,
+          {
+            type: "system",
+            message: message.success
+              ? "Plan executed successfully."
+              : `Plan execution failed: ${message.error}`,
+            timestamp: Date.now(),
+          },
+        ],
+      }));
+    } else if (message.type === "bash_result") {
+      // Direct bash command result
       setState((prev) => ({
         ...prev,
         messages: [
           ...prev.messages,
           {
-            type: "system",
-            message: `Switched to ${message.mode === "api" ? "API" : "Local"} mode`,
+            type: "bash_result",
+            command: message.command,
+            stdout: message.stdout,
+            stderr: message.stderr,
+            success: message.success,
             timestamp: Date.now(),
           },
         ],
@@ -166,10 +263,7 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
       const providerStatus: ProviderStatusMessage = message.status;
       setState((prev) => ({
         ...prev,
-        providerStatusApi:
-          providerStatus.mode === "api" ? providerStatus : prev.providerStatusApi,
-        providerStatusLocal:
-          providerStatus.mode === "local" ? providerStatus : prev.providerStatusLocal,
+        providerStatus,
         messages: [
           ...prev.messages,
           {
@@ -178,6 +272,12 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
             timestamp: Date.now(),
           },
         ],
+      }));
+    } else if (message.type === "context_stats") {
+      // Update context stats for StatusBar display
+      setState((prev) => ({
+        ...prev,
+        contextStats: message.stats,
       }));
     } else {
       // All other messages
@@ -195,17 +295,56 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
     if (!state.connected) return;
 
     const trimmedText = text.trim();
-    const lowerText = trimmedText.toLowerCase();
+    if (!trimmedText) return;
 
-    // Handle commands (must start with /)
+    // === BASH MODE: Direct execution ===
+    if (trimmedText.startsWith("$")) {
+      const command = trimmedText.slice(1).trim();
+      if (!command) return;
+
+      // Add to recent commands
+      if (!RECENT_BASH_COMMANDS.includes(command)) {
+        RECENT_BASH_COMMANDS.unshift(command);
+        if (RECENT_BASH_COMMANDS.length > 10) {
+          RECENT_BASH_COMMANDS.pop();
+        }
+      }
+
+      // Show user's bash command
+      setState((prev) => ({
+        ...prev,
+        messages: [
+          ...prev.messages,
+          {
+            type: "user_bash",
+            command,
+            timestamp: Date.now(),
+          },
+        ],
+      }));
+
+      // Execute directly (bypasses agent)
+      if (onBashCommand) {
+        onBashCommand(command);
+      } else {
+        // Fallback: send as regular input with bash indicator
+        onUserInput(`[BASH] ${command}`, state.agentMode);
+      }
+      return;
+    }
+
+    // === COMMAND MODE: Slash commands ===
     if (trimmedText.startsWith("/")) {
-      const command = lowerText.slice(1).split(" ")[0]; // Get command name (before any args)
-      
+      const lowerText = trimmedText.toLowerCase();
+      const parts = trimmedText.slice(1).split(" ");
+      const command = parts[0].toLowerCase();
+      const args = parts.slice(1).join(" ");
+
       if (command === "quit") {
         process.exit(0);
         return;
       }
-      
+
       if (command === "reset") {
         onReset();
         handleServerMessage({
@@ -213,31 +352,18 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
           message: "Agent memory reset. Conversation context cleared.",
           timestamp: Date.now(),
         });
-        // Don't clear UI messages - only reset agent memory
         return;
       }
-      
+
       if (command === "clear") {
         setState((prev) => ({
           ...prev,
-          messages: [], // Clear all messages including token stats
+          messages: [],
         }));
-        // Don't send system message - just clear silently
         return;
       }
-      
-      if (command === "api") {
-        onSwitchMode("api");
-        return;
-      }
-      
-      if (command === "local") {
-        onSwitchMode("local");
-        return;
-      }
-      
+
       if (command === "cd") {
-        const args = trimmedText.slice(4).trim(); // Remove "/cd " prefix
         if (!args) {
           handleServerMessage({
             type: "error",
@@ -249,35 +375,58 @@ export const App: React.FC<AppProps> = ({ onUserInput, onApproval, onMessage, on
         }
         return;
       }
-      
+
       if (command === "ls") {
-        const args = trimmedText.slice(3).trim(); // Remove "/ls " prefix
         onListDirectory(args || undefined);
         return;
       }
-      
+
+      if (command === "plan") {
+        toggleAgentMode();
+        return;
+      }
+
+      if (command === "config") {
+        handleServerMessage({
+          type: "system",
+          message: `Current Configuration:
+Mode: ${state.agentMode.toUpperCase()}
+Provider: ${state.providerStatus?.provider || 'Local'}
+Model: ${state.providerStatus?.model || 'Unknown'}
+Context: ${state.contextStats?.usagePercent || 0}% used`,
+          timestamp: Date.now(),
+        });
+        return;
+      }
+
       if (command === "help") {
         handleServerMessage({
           type: "system",
           message: `Available Commands:
 /help     - Show this help message
-/reset    - Reset agent memory/context (keeps screen)
-/clear    - Clear the screen (keeps memory)
-/cd <dir> - Change directory (e.g., /cd /path/to/dir or /cd ..)
-/ls [dir] - List directory contents (e.g., /ls or /ls /path)
-/api      - Switch to API mode (HF -> Gemini -> Groq -> OpenRouter)
-/local    - Switch to local LLM mode
+/reset    - Reset agent memory/context
+/clear    - Clear the screen
+/cd <dir> - Change directory
+/ls [dir] - List directory contents
+/plan     - Toggle plan mode (Shift+Tab)
+/config   - Show configuration
 /quit     - Exit the application
 
-Current mode: ${mode === "api" ? "API (cloud cascade)" : "Local LLM"}
+Input Modes:
+$command  - Execute bash command directly
+/command  - Slash commands
+text      - Chat with agent
 
-All commands must start with /. Type / and press Tab to see available commands.`,
+Keyboard:
+Shift+Tab - Toggle Normal/Plan mode
+Tab       - Cycle suggestions
+Escape    - Clear input`,
           timestamp: Date.now(),
         });
         return;
       }
-      
-      // Unknown command - show error
+
+      // Unknown command
       handleServerMessage({
         type: "error",
         message: `Unknown command: ${trimmedText}. Type /help for available commands.`,
@@ -286,9 +435,23 @@ All commands must start with /. Type / and press Tab to see available commands.`
       return;
     }
 
-    // All commands must use / prefix - no exceptions
-    // Regular input - send to agent
-    onUserInput(text);
+    // === CHAT MODE: Send to agent ===
+    // Show user's message
+    setState((prev) => ({
+      ...prev,
+      messages: [
+        ...prev.messages,
+        {
+          type: "user_message",
+          content: trimmedText,
+          agentMode: state.agentMode,
+          timestamp: Date.now(),
+        },
+      ],
+    }));
+
+    // Send to agent with current mode
+    onUserInput(trimmedText, state.agentMode);
   };
 
   const handleApproval = (approved: boolean) => {
@@ -298,27 +461,59 @@ All commands must start with /. Type / and press Tab to see available commands.`
     setState((prev) => ({ ...prev, pendingApproval: null }));
   };
 
+  // Handle plan actions
+  const handleExecutePlan = () => {
+    if (state.planSteps && onExecutePlan) {
+      onExecutePlan(state.planSteps[0]?.id || 'plan');
+    }
+  };
+
+  const handleCancelPlan = () => {
+    setState((prev) => ({
+      ...prev,
+      planSteps: null,
+      pendingPlan: false,
+    }));
+    if (onCancelPlan) {
+      onCancelPlan();
+    }
+  };
+
   return (
     <Box flexDirection="column" height="100%">
       <Banner />
       <StatusBar
         connected={state.connected}
         tokenStats={state.tokenStats}
-        mode={mode}
-        providerStatus={mode === "api" ? state.providerStatusApi : state.providerStatusLocal}
+        providerStatus={state.providerStatus}
+        contextStats={state.contextStats}
+        agentMode={state.agentMode}
       />
       <Box flexDirection="column" flexGrow={1} paddingY={1}>
-        <LogView messages={state.messages} />
+        <LogView
+          messages={state.messages}
+          agentMode={state.agentMode}
+        />
       </Box>
       {state.pendingApproval ? (
         <PermissionModal
           approval={state.pendingApproval}
           onApprove={handleApproval}
         />
+      ) : state.pendingPlan && state.planSteps && state.planSteps.length > 0 ? (
+        <PlanModeOverlay
+          steps={state.planSteps}
+          onExecute={handleExecutePlan}
+          onCancel={handleCancelPlan}
+        />
       ) : (
         <UserInput
           onSubmit={handleUserSubmit}
+          onInputChange={updateInputMode}
+          onModeToggle={toggleAgentMode}
           disabled={!state.connected}
+          agentMode={state.agentMode}
+          inputMode={state.inputMode}
         />
       )}
     </Box>

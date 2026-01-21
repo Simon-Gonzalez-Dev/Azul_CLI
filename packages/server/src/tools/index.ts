@@ -1,16 +1,16 @@
 import { ToolDefinition } from "../types.js";
-import { readFileTool, writeFileTool, listDirTool, editFileTool } from "./filesystem.js";
-import { executeCommandTool } from "./shell.js";
-import { searchFilesTool, grepTool } from "./search.js";
+import { lsTool, viewTool, editTool, writeTool } from "./filesystem.js";
+import { bashTool } from "./shell.js";
+import { grepTool } from "./search.js";
 
+// Claude Code style tools
 export const tools: ToolDefinition[] = [
-  readFileTool,
-  editFileTool,
-  writeFileTool, // Keep for backwards compatibility but prefer edit_file
-  listDirTool,
-  executeCommandTool,
-  grepTool, // Enhanced grep tool
-  searchFilesTool, // Simple search (backwards compatible)
+  lsTool,       // List directory contents
+  viewTool,     // Read file with line numbers
+  editTool,     // Edit file via search/replace
+  writeTool,    // Create new file
+  bashTool,     // Execute shell commands (sandboxed)
+  grepTool,     // Search for patterns
 ];
 
 // Optimized tool lookup using Map for O(1) access
@@ -23,6 +23,5 @@ export function getToolByName(name: string): ToolDefinition | undefined {
   return toolMap.get(name);
 }
 
-// Individual tools are only used internally - no need to export them
-// They're accessible via getToolByName() or the tools array
-
+// Re-export individual tools for direct imports
+export { lsTool, viewTool, editTool, writeTool, bashTool, grepTool };

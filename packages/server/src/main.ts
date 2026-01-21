@@ -6,7 +6,6 @@ console.clear();
 import * as path from "path";
 import * as fs from "fs/promises";
 import { fileURLToPath } from "url";
-import * as dotenv from "dotenv";
 import { LLMOrchestrator, ProviderStatus } from "./orchestrator.js";
 import { Config } from "./types.js";
 import { Agent } from "./agent.js";
@@ -19,38 +18,16 @@ import { App } from "../../ui/dist/App.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load environment variables - try package root first, then current directory
-// Current directory .env will override package root .env values
-const packageRoot = path.resolve(__dirname, "../../..");
-const packageEnvPath = path.join(packageRoot, ".env");
-const cwdEnvPath = path.join(process.cwd(), ".env");
-
-// Load environment variables silently - no console output
-// Try package root .env first (for global installs)
-try {
-  dotenv.config({ path: packageEnvPath });
-} catch {
-  // Ignore if file doesn't exist
-}
-
-// Also try current directory .env (allows project-specific overrides)
-try {
-  dotenv.config({ path: cwdEnvPath, override: true });
-} catch {
-  // Ignore if file doesn't exist
-}
-
-
 const BANNER = `
-  
-    █████╗   ███████╗   ██╗   ██╗   ██╗       
-   ██╔══██╗   ╚════██╗  ██║   ██║   ██║      
-  ███████║    █████╔╝   ██║   ██║   ██║       
- ██╔══██║    ██╔═══╝    ██║   ██║   ██║       
-██║  ██║     ███████╗   ╚██████╔╝   ███████╗  
-╚═╝  ╚═╝     ╚══════╝    ╚═════╝    ╚══════╝ 
 
-║   AI Coding Assistant - Universal Mode  ║
+    █████╗   ███████╗   ██╗   ██╗   ██╗
+   ██╔══██╗   ╚════██╗  ██║   ██║   ██║
+  ███████║    █████╔╝   ██║   ██║   ██║
+ ██╔══██║    ██╔═══╝    ██║   ██║   ██║
+██║  ██║     ███████╗   ╚██████╔╝   ███████╗
+╚═╝  ╚═╝     ╚══════╝    ╚═════╝    ╚══════╝
+
+║   Local AI Coding Assistant  ║
 
 
 `;
@@ -66,7 +43,7 @@ async function loadConfig(): Promise<{ config: Config; configPath: string }> {
   // Try to find config.json in current working directory first
   // This allows users to have project-specific configs
   const cwdConfigPath = path.join(process.cwd(), "config.json");
-  
+
   try {
     await fs.access(cwdConfigPath);
     const configData = await fs.readFile(cwdConfigPath, "utf-8");
@@ -75,12 +52,12 @@ async function loadConfig(): Promise<{ config: Config; configPath: string }> {
   } catch (error) {
     // Config not found in current directory, try package directory
   }
-  
+
   // Try to find config in package directory (for global installs)
   // Look for config.json relative to this file's location
   const packageRoot = findPackageRoot();
   const packageConfigPath = path.join(packageRoot, "config.json");
-  
+
   try {
     await fs.access(packageConfigPath);
     const configData = await fs.readFile(packageConfigPath, "utf-8");
@@ -88,9 +65,8 @@ async function loadConfig(): Promise<{ config: Config; configPath: string }> {
     return { config, configPath: packageRoot };
   } catch (error) {
     // Config not found, use defaults
-    // Failed to load config - using defaults (silent)
   }
-  
+
   // Use package root as configPath for defaults
   return {
     config: {
@@ -103,9 +79,6 @@ async function loadConfig(): Promise<{ config: Config; configPath: string }> {
 }
 
 async function main() {
-  // Terminal already cleared at module level
-  // UI will handle banner display
-
   const queuedMessages: any[] = [];
   let uiReady = false;
 
@@ -133,7 +106,6 @@ async function main() {
 
   // Load configuration
   const { config, configPath } = await loadConfig();
-  // Configuration loaded - no console output (UI will show if needed)
 
   // Resolve model path relative to config file location, not current working directory
   let modelPath: string;
@@ -158,51 +130,29 @@ async function main() {
     }
   }
 
-  // Gather API Keys
+  // Provider configuration (local only)
   const providerConfig = {
-    hfApiKey: process.env.HF_API_KEY,
-    hfModel: process.env.HF_MODEL,
-    geminiApiKey: process.env.GEMINI_API_KEY,
-    geminiModel: process.env.GEMINI_MODEL,
-    groqApiKey: process.env.GROK_API_KEY || process.env.GROQ_API_KEY,
-    groqModel: process.env.GROK_MODEL || process.env.GROQ_MODEL,
-    openRouterApiKey: process.env.OPENROUTER_API_KEY,
-    openRouterModel: process.env.OPENROUTER_MODEL,
     localModelPath: modelPath,
     localContextSize: config.contextSize,
     localMaxTokens: config.maxTokens,
   };
-
-  // Initialize mode tracking
-  let currentMode: "local" | "api" = "local";
 
   const handleProviderStatus = (status: ProviderStatus) => {
     enqueueMessage({
       type: "provider_status",
       status,
     });
-
-    if (status.fallback && status.reason && status.previousProvider) {
-      enqueueMessage({
-        type: "system",
-        message: `Fallback (${status.previousProvider} → ${status.provider}): ${status.reason}`,
-      });
-    } else if (!status.fallback) {
-      const modeLabel = status.mode === "api" ? "API" : "Local";
-      enqueueMessage({
-        type: "system",
-        message: `${modeLabel} provider: ${status.provider} (${status.model})`,
-      });
-    }
+    enqueueMessage({
+      type: "system",
+      message: `Local provider: ${status.provider} (${status.model})`,
+    });
   };
 
-  const apiOrchestrator = new LLMOrchestrator(providerConfig, true, handleProviderStatus);
-  const localOrchestrator = new LLMOrchestrator(providerConfig, false, handleProviderStatus);
+  const orchestrator = new LLMOrchestrator(providerConfig, handleProviderStatus);
 
-  // Initialize Local by default
+  // Initialize Local LLM
   try {
-    await localOrchestrator.initialize();
-    // Local LLM initialized - status shown in UI
+    await orchestrator.initialize();
   } catch (error) {
     enqueueMessage({
       type: "error",
@@ -210,30 +160,20 @@ async function main() {
     });
   }
 
-  // Pre-initialize API if keys exist (optional, but good for fast switching)
-  const apiKeysExist = providerConfig.hfApiKey || providerConfig.geminiApiKey || providerConfig.groqApiKey || providerConfig.openRouterApiKey;
-  if (apiKeysExist) {
-    try {
-        await apiOrchestrator.initialize();
-        // API Providers initialized - status shown in UI
-    } catch (e) {
-        // Ignore initialization errors for API until switched
-    }
-  }
-
-  let currentLLM = localOrchestrator;
-
   // Track working directory (starts from where azul was called)
   let workingDirectory: string = process.cwd();
 
-  // Create agent with direct callback and working directory context
+  // Create agent with direct callback, working directory context, and context size
   const agent = new Agent((message: any) => {
     enqueueMessage(message);
-  }, currentLLM, workingDirectory);
-  
+  }, orchestrator, workingDirectory, config.contextSize);
+
+  // Initialize agent (loads AZUL.md)
+  await agent.initialize();
+
   // Update agent's working directory when it changes
-  const updateAgentWorkingDirectory = () => {
-    agent.setWorkingDirectory(workingDirectory);
+  const updateAgentWorkingDirectory = async () => {
+    await agent.setWorkingDirectory(workingDirectory);
   };
 
   // Handle approval requests
@@ -243,8 +183,6 @@ async function main() {
 
   // Handle user input
   const handleUserInput = (text: string) => {
-    // Commands starting with / are handled in the UI
-    // This function only receives non-command input
     agent.handleUserMessage(text);
   };
 
@@ -256,10 +194,10 @@ async function main() {
   // Handle directory change
   const handleChangeDirectory = async (dirPath: string): Promise<void> => {
     try {
-      const resolvedPath = path.isAbsolute(dirPath) 
-        ? dirPath 
+      const resolvedPath = path.isAbsolute(dirPath)
+        ? dirPath
         : path.resolve(workingDirectory, dirPath);
-      
+
       // Check if directory exists
       const stats = await fs.stat(resolvedPath);
       if (!stats.isDirectory()) {
@@ -269,11 +207,11 @@ async function main() {
         });
         return;
       }
-      
+
       workingDirectory = resolvedPath;
-      process.chdir(workingDirectory); // Also change Node's cwd
-      updateAgentWorkingDirectory(); // Update agent's working directory
-      
+      process.chdir(workingDirectory);
+      await updateAgentWorkingDirectory();
+
       enqueueMessage({
         type: "system",
         message: `Changed directory to: ${workingDirectory}`,
@@ -289,12 +227,12 @@ async function main() {
   // Handle list directory
   const handleListDirectory = async (dirPath?: string): Promise<void> => {
     try {
-      const targetPath = dirPath 
+      const targetPath = dirPath
         ? (path.isAbsolute(dirPath) ? dirPath : path.resolve(workingDirectory, dirPath))
         : workingDirectory;
-      
+
       const entries = await fs.readdir(targetPath, { withFileTypes: true });
-      
+
       const items = entries.map(entry => {
         const name = entry.name;
         const isDir = entry.isDirectory();
@@ -306,10 +244,10 @@ async function main() {
         if (!a.isDir && b.isDir) return 1;
         return a.name.localeCompare(b.name);
       });
-      
+
       const dirs = items.filter(item => item.isDir).map(item => item.name + "/");
       const files = items.filter(item => !item.isDir).map(item => item.name);
-      
+
       const output = [
         `Directory: ${targetPath}`,
         "",
@@ -317,7 +255,7 @@ async function main() {
         files.length > 0 ? `Files:\n  ${files.join("\n  ")}` : "",
         dirs.length === 0 && files.length === 0 ? "(empty)" : "",
       ].filter(Boolean).join("\n");
-      
+
       enqueueMessage({
         type: "system",
         message: output,
@@ -330,34 +268,6 @@ async function main() {
     }
   };
 
-  // Handle mode switching
-  const handleSwitchMode = (mode: "local" | "api") => {
-    if (mode === "api") {
-      if (apiKeysExist) {
-        currentMode = "api";
-        currentLLM = apiOrchestrator;
-        agent.setLLM(apiOrchestrator);
-        enqueueMessage({
-          type: "mode_changed",
-          mode: "api",
-        });
-      } else {
-        enqueueMessage({
-          type: "error",
-          message: "No API keys found in .env (HF_API_KEY, GEMINI_API_KEY, GROK_API_KEY/GROQ_API_KEY, OPENROUTER_API_KEY)",
-        });
-      }
-    } else if (mode === "local") {
-      currentMode = "local";
-      currentLLM = localOrchestrator;
-      agent.setLLM(localOrchestrator);
-      enqueueMessage({
-        type: "mode_changed",
-        mode: "local",
-      });
-    }
-  };
-
   // Render UI with direct callbacks
   render(
     React.createElement(App, {
@@ -366,22 +276,18 @@ async function main() {
       onMessage: (handler: (message: any) => void) => {
         messageHandlers.onMessage = handler;
         uiReady = true;
-        // Don't send queued messages - start fresh with clean UI
-        // Only banner will be shown
+        // Start fresh with clean UI
         queuedMessages.length = 0;
       },
       onReset: handleReset,
-      onSwitchMode: handleSwitchMode,
       onChangeDirectory: handleChangeDirectory,
       onListDirectory: handleListDirectory,
-      currentMode: currentMode,
     })
   );
 
   // Graceful shutdown
   const shutdown = async () => {
-    await localOrchestrator.cleanup();
-    await apiOrchestrator.cleanup();
+    await orchestrator.cleanup();
     process.exit(0);
   };
 
@@ -390,6 +296,5 @@ async function main() {
 }
 
 main().catch((error) => {
-  // Fatal error - exit silently (error already shown in UI if possible)
   process.exit(1);
 });
